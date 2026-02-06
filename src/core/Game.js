@@ -127,29 +127,375 @@ export class Game {
   }
 
   /**
-   * Setup floor
+   * Get shape type value for shader
    * @private
    */
-  _setupFloor() {
-    const geometry = new THREE.PlaneGeometry(ARENA.WIDTH, ARENA.HEIGHT, 30, 20);
-    const material = new THREE.ShaderMaterial({
+  _getShapeTypeValue(shape) {
+    const shapeValues = {
+      'rectangle': 0.0,
+      'oval': 1.0,
+      'diamond': 2.0,
+      'hexagon': 3.0,
+      'circle': 4.0,
+      'octagon': 5.0,
+      'cross': 6.0,
+      'rounded_rect': 7.0
+    };
+    return shapeValues[shape] || 0.0;
+  }
+
+  /**
+   * Create floor geometry based on arena shape
+   * @private
+   */
+  _createFloorGeometry(shape) {
+    const segments = 40;
+    
+    switch (shape) {
+      case ARENA.SHAPES.CIRCLE: {
+        const radius = Math.min(ARENA.WIDTH, ARENA.HEIGHT) / 2;
+        const geometry = new THREE.CircleGeometry(radius, segments);
+        return { geometry, width: radius * 2, height: radius * 2 };
+      }
+      case ARENA.SHAPES.OVAL: {
+        const radiusX = ARENA.WIDTH / 2;
+        const radiusZ = ARENA.HEIGHT / 2;
+        const geometry = new THREE.PlaneGeometry(radiusX * 2, radiusZ * 2, segments, segments);
+        return { geometry, width: radiusX * 2, height: radiusZ * 2 };
+      }
+      case ARENA.SHAPES.DIAMOND: {
+        const shape = new THREE.Shape();
+        const hw = ARENA.WIDTH / 2;
+        const hh = ARENA.HEIGHT / 2;
+        shape.moveTo(0, -hh);
+        shape.lineTo(hw, 0);
+        shape.lineTo(0, hh);
+        shape.lineTo(-hw, 0);
+        shape.lineTo(0, -hh);
+        const geometry = new THREE.ShapeGeometry(shape, segments);
+        return { geometry, width: ARENA.WIDTH, height: ARENA.HEIGHT };
+      }
+      case ARENA.SHAPES.HEXAGON: {
+        const radius = Math.min(ARENA.WIDTH, ARENA.HEIGHT) / 2;
+        const shape = new THREE.Shape();
+        for (let i = 0; i <= 6; i++) {
+          const angle = (i * Math.PI * 2) / 6 - Math.PI / 2;
+          const x = Math.cos(angle) * radius;
+          const y = Math.sin(angle) * radius;
+          if (i === 0) {
+            shape.moveTo(x, y);
+          } else {
+            shape.lineTo(x, y);
+          }
+        }
+        const geometry = new THREE.ShapeGeometry(shape, segments);
+        return { geometry, width: radius * 2, height: radius * 2 };
+      }
+      case ARENA.SHAPES.OCTAGON: {
+        const radius = Math.min(ARENA.WIDTH, ARENA.HEIGHT) / 2;
+        const shape = new THREE.Shape();
+        for (let i = 0; i <= 8; i++) {
+          const angle = (i * Math.PI * 2) / 8 - Math.PI / 8;
+          const x = Math.cos(angle) * radius;
+          const y = Math.sin(angle) * radius;
+          if (i === 0) {
+            shape.moveTo(x, y);
+          } else {
+            shape.lineTo(x, y);
+          }
+        }
+        const geometry = new THREE.ShapeGeometry(shape, segments);
+        return { geometry, width: radius * 2, height: radius * 2 };
+      }
+      case ARENA.SHAPES.CROSS: {
+        const armWidth = 6;
+        const armLength = Math.min(ARENA.WIDTH, ARENA.HEIGHT) / 2;
+        const shape = new THREE.Shape();
+        // Draw cross shape
+        shape.moveTo(-armWidth, -armLength);
+        shape.lineTo(armWidth, -armLength);
+        shape.lineTo(armWidth, -armWidth);
+        shape.lineTo(armLength, -armWidth);
+        shape.lineTo(armLength, armWidth);
+        shape.lineTo(armWidth, armWidth);
+        shape.lineTo(armWidth, armLength);
+        shape.lineTo(-armWidth, armLength);
+        shape.lineTo(-armWidth, armWidth);
+        shape.lineTo(-armLength, armWidth);
+        shape.lineTo(-armLength, -armWidth);
+        shape.lineTo(-armWidth, -armWidth);
+        shape.lineTo(-armWidth, -armLength);
+        const geometry = new THREE.ShapeGeometry(shape, segments);
+        return { geometry, width: ARENA.WIDTH, height: ARENA.HEIGHT };
+      }
+      case ARENA.SHAPES.ROUNDED_RECT: {
+        const width = ARENA.WIDTH;
+        const height = ARENA.HEIGHT;
+        const radius = 5;
+        const shape = new THREE.Shape();
+        const hw = width / 2;
+        const hh = height / 2;
+        shape.moveTo(-hw + radius, -hh);
+        shape.lineTo(hw - radius, -hh);
+        shape.quadraticCurveTo(hw, -hh, hw, -hh + radius);
+        shape.lineTo(hw, hh - radius);
+        shape.quadraticCurveTo(hw, hh, hw - radius, hh);
+        shape.lineTo(-hw + radius, hh);
+        shape.quadraticCurveTo(-hw, hh, -hw, hh - radius);
+        shape.lineTo(-hw, -hh + radius);
+        shape.quadraticCurveTo(-hw, -hh, -hw + radius, -hh);
+        const geometry = new THREE.ShapeGeometry(shape, segments);
+        return { geometry, width, height };
+      }
+      default: {
+        // Rectangle
+        const geometry = new THREE.PlaneGeometry(ARENA.WIDTH, ARENA.HEIGHT, 30, 20);
+        return { geometry, width: ARENA.WIDTH, height: ARENA.HEIGHT };
+      }
+    }
+  }
+
+  /**
+   * Create curved wall segments for circular/oval arenas
+   * @private
+   */
+  _createCurvedWalls(level, radiusX, radiusZ, segments = 32) {
+    const walls = [];
+    const wallMaterial = new THREE.ShaderMaterial({
       uniforms: {
         time: { value: 0 },
-        level: { value: 1 }
+        level: { value: level }
       },
       vertexShader: `
-        varying vec2 vUv;
+        varying vec3 vPosition;
         void main() {
-          vUv = uv;
+          vPosition = position;
           gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
         }
       `,
       fragmentShader: `
         uniform float time;
         uniform float level;
-        varying vec2 vUv;
+        varying vec3 vPosition;
         void main() {
-          vec2 grid = abs(fract(vUv * vec2(30.0, 20.0) - 0.5) - 0.5) / fwidth(vUv * vec2(30.0, 20.0));
+          float pulse = sin(time * (3.0 + level * 0.5) + vPosition.x * 0.5) * 0.3 + 0.7;
+          vec3 color = mix(vec3(1.0, 0.2, 0.3), vec3(1.0, 0.4, 0.2), level / 10.0) * pulse;
+          float edge = smoothstep(0.8, 1.0, abs(vPosition.x / 0.5));
+          color += vec3(1.0, 0.5, 0.5) * edge;
+          gl_FragColor = vec4(color, 0.8);
+        }
+      `,
+      transparent: true,
+      side: THREE.DoubleSide
+    });
+
+    for (let i = 0; i < segments; i++) {
+      const angle1 = (i * Math.PI * 2) / segments;
+      const angle2 = ((i + 1) * Math.PI * 2) / segments;
+      const midAngle = (angle1 + angle2) / 2;
+      
+      const x1 = Math.cos(angle1) * radiusX;
+      const z1 = Math.sin(angle1) * radiusZ;
+      const x2 = Math.cos(angle2) * radiusX;
+      const z2 = Math.sin(angle2) * radiusZ;
+      
+      const wallLength = Math.sqrt((x2 - x1) ** 2 + (z2 - z1) ** 2);
+      const wallAngle = Math.atan2(z2 - z1, x2 - x1);
+      
+      const geometry = new THREE.BoxGeometry(wallLength + 0.2, 2, 2);
+      const wall = new THREE.Mesh(geometry, wallMaterial.clone());
+      
+      wall.position.set(
+        (x1 + x2) / 2,
+        0,
+        (z1 + z2) / 2
+      );
+      wall.rotation.y = -wallAngle;
+      
+      this.scene.add(wall);
+      walls.push(wall);
+    }
+    
+    return walls;
+  }
+
+  /**
+   * Create polygon walls for diamond, hexagon, octagon
+   * @private
+   */
+  _createPolygonWalls(level, sides, radius) {
+    const walls = [];
+    const wallMaterial = new THREE.ShaderMaterial({
+      uniforms: {
+        time: { value: 0 },
+        level: { value: level }
+      },
+      vertexShader: `
+        varying vec3 vPosition;
+        void main() {
+          vPosition = position;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform float time;
+        uniform float level;
+        varying vec3 vPosition;
+        void main() {
+          float pulse = sin(time * (3.0 + level * 0.5) + vPosition.x * 0.5) * 0.3 + 0.7;
+          vec3 color = mix(vec3(1.0, 0.2, 0.3), vec3(1.0, 0.4, 0.2), level / 10.0) * pulse;
+          float edge = smoothstep(0.8, 1.0, abs(vPosition.x / 0.5));
+          color += vec3(1.0, 0.5, 0.5) * edge;
+          gl_FragColor = vec4(color, 0.8);
+        }
+      `,
+      transparent: true,
+      side: THREE.DoubleSide
+    });
+
+    const angleOffset = sides === 4 ? Math.PI / 4 : Math.PI / sides;
+    
+    for (let i = 0; i < sides; i++) {
+      const angle1 = (i * Math.PI * 2) / sides - angleOffset;
+      const angle2 = ((i + 1) * Math.PI * 2) / sides - angleOffset;
+      
+      const x1 = Math.cos(angle1) * radius;
+      const z1 = Math.sin(angle1) * radius;
+      const x2 = Math.cos(angle2) * radius;
+      const z2 = Math.sin(angle2) * radius;
+      
+      const wallLength = Math.sqrt((x2 - x1) ** 2 + (z2 - z1) ** 2);
+      const wallAngle = Math.atan2(z2 - z1, x2 - x1);
+      
+      const geometry = new THREE.BoxGeometry(wallLength + 0.2, 2, 2);
+      const wall = new THREE.Mesh(geometry, wallMaterial.clone());
+      
+      wall.position.set(
+        (x1 + x2) / 2,
+        0,
+        (z1 + z2) / 2
+      );
+      wall.rotation.y = -wallAngle;
+      
+      this.scene.add(wall);
+      walls.push(wall);
+    }
+    
+    return walls;
+  }
+
+  /**
+   * Create cross-shaped walls
+   * @private
+   */
+  _createCrossWalls(level) {
+    const walls = [];
+    const armWidth = 6;
+    const armLength = Math.min(ARENA.WIDTH, ARENA.HEIGHT) / 2;
+    
+    const wallMaterial = new THREE.ShaderMaterial({
+      uniforms: {
+        time: { value: 0 },
+        level: { value: level }
+      },
+      vertexShader: `
+        varying vec3 vPosition;
+        void main() {
+          vPosition = position;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform float time;
+        uniform float level;
+        varying vec3 vPosition;
+        void main() {
+          float pulse = sin(time * (3.0 + level * 0.5) + vPosition.x * 0.5) * 0.3 + 0.7;
+          vec3 color = mix(vec3(1.0, 0.2, 0.3), vec3(1.0, 0.4, 0.2), level / 10.0) * pulse;
+          float edge = smoothstep(0.8, 1.0, abs(vPosition.x / 0.5));
+          color += vec3(1.0, 0.5, 0.5) * edge;
+          gl_FragColor = vec4(color, 0.8);
+        }
+      `,
+      transparent: true
+    });
+
+    // Define cross wall segments
+    const wallSegments = [
+      // Top arm outer
+      { x: 0, z: -armLength - 1, w: armWidth, d: 2 },
+      // Bottom arm outer
+      { x: 0, z: armLength + 1, w: armWidth, d: 2 },
+      // Left arm outer
+      { x: -armLength - 1, z: 0, w: 2, d: armWidth },
+      // Right arm outer
+      { x: armLength + 1, z: 0, w: 2, d: armWidth },
+      // Top-left corner
+      { x: -armLength - 1, z: -armLength - 1, w: armLength - armWidth/2 + 1, d: 2 },
+      // Top-right corner
+      { x: armLength + 1, z: -armLength - 1, w: armLength - armWidth/2 + 1, d: 2 },
+      // Bottom-left corner
+      { x: -armLength - 1, z: armLength + 1, w: armLength - armWidth/2 + 1, d: 2 },
+      // Bottom-right corner
+      { x: armLength + 1, z: armLength + 1, w: armLength - armWidth/2 + 1, d: 2 },
+      // Inner corners
+      { x: -armWidth/2 - 1, z: -armWidth/2 - 1, w: 2, d: armLength - armWidth },
+      { x: armWidth/2 + 1, z: -armWidth/2 - 1, w: 2, d: armLength - armWidth },
+      { x: -armWidth/2 - 1, z: armWidth/2 + 1, w: 2, d: armLength - armWidth },
+      { x: armWidth/2 + 1, z: armWidth/2 + 1, w: 2, d: armLength - armWidth },
+    ];
+    
+    wallSegments.forEach(pos => {
+      const geometry = new THREE.BoxGeometry(pos.w, 2, pos.d);
+      const wall = new THREE.Mesh(geometry, wallMaterial.clone());
+      wall.position.set(pos.x, 0, pos.z);
+      this.scene.add(wall);
+      walls.push(wall);
+    });
+    
+    return walls;
+  }
+
+  /**
+   * Setup floor
+   * @private
+   */
+  _setupFloor() {
+    const shape = ARENA.getShapeForLevel(1);
+    const { geometry, width, height } = this._createFloorGeometry(shape);
+    
+    const material = new THREE.ShaderMaterial({
+      uniforms: {
+        time: { value: 0 },
+        level: { value: 1 },
+        shapeType: { value: this._getShapeTypeValue(shape) }
+      },
+      vertexShader: `
+        varying vec2 vUv;
+        varying vec3 vPosition;
+        void main() {
+          vUv = uv;
+          vPosition = position;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform float time;
+        uniform float level;
+        uniform float shapeType;
+        varying vec2 vUv;
+        varying vec3 vPosition;
+        void main() {
+          float gridScaleX = 30.0;
+          float gridScaleZ = 20.0;
+          
+          // Adjust grid for different shapes
+          if (shapeType > 1.5) {
+            gridScaleX = 25.0;
+            gridScaleZ = 25.0;
+          }
+          
+          vec2 grid = abs(fract(vUv * vec2(gridScaleX, gridScaleZ) - 0.5) - 0.5) / fwidth(vUv * vec2(gridScaleX, gridScaleZ));
           float line = min(grid.x, grid.y);
           float glow = 1.0 - min(line, 1.0);
           float pulse = sin(time * 2.0) * 0.3 + 0.7;
@@ -178,6 +524,56 @@ export class Game {
     this.walls.forEach(w => this.scene.remove(w));
     this.walls = [];
     
+    const shape = ARENA.getShapeForLevel(level);
+    
+    switch (shape) {
+      case ARENA.SHAPES.CIRCLE:
+        const radius = Math.min(ARENA.WIDTH, ARENA.HEIGHT) / 2 + 1;
+        this.walls = this._createCurvedWalls(level, radius, radius, 48);
+        break;
+        
+      case ARENA.SHAPES.OVAL:
+        const radiusX = ARENA.WIDTH / 2 + 1;
+        const radiusZ = ARENA.HEIGHT / 2 + 1;
+        this.walls = this._createCurvedWalls(level, radiusX, radiusZ, 40);
+        break;
+        
+      case ARENA.SHAPES.DIAMOND:
+        const dRadius = (Math.min(ARENA.WIDTH, ARENA.HEIGHT) / 2 + 1) * 1.2;
+        this.walls = this._createPolygonWalls(level, 4, dRadius);
+        break;
+        
+      case ARENA.SHAPES.HEXAGON:
+        const hexRadius = Math.min(ARENA.WIDTH, ARENA.HEIGHT) / 2 + 1;
+        this.walls = this._createPolygonWalls(level, 6, hexRadius);
+        break;
+        
+      case ARENA.SHAPES.OCTAGON:
+        const octRadius = Math.min(ARENA.WIDTH, ARENA.HEIGHT) / 2 + 1;
+        this.walls = this._createPolygonWalls(level, 8, octRadius);
+        break;
+        
+      case ARENA.SHAPES.CROSS:
+        this.walls = this._createCrossWalls(level);
+        break;
+        
+      case ARENA.SHAPES.ROUNDED_RECT:
+        this.walls = this._createRoundedRectWalls(level);
+        break;
+        
+      default:
+        // Rectangle - original 4 walls
+        this.walls = this._createRectangularWalls(level);
+        break;
+    }
+  }
+
+  /**
+   * Create rectangular walls (default)
+   * @private
+   */
+  _createRectangularWalls(level) {
+    const walls = [];
     const wallMaterial = new THREE.ShaderMaterial({
       uniforms: {
         time: { value: 0 },
@@ -205,7 +601,6 @@ export class Game {
       transparent: true
     });
     
-    // Create 4 walls
     const positions = [
       { x: 0, z: -ARENA.HEIGHT/2 - 1, w: ARENA.WIDTH + 2, d: 2 },
       { x: 0, z: ARENA.HEIGHT/2 + 1, w: ARENA.WIDTH + 2, d: 2 },
@@ -218,8 +613,107 @@ export class Game {
       const wall = new THREE.Mesh(geometry, wallMaterial.clone());
       wall.position.set(pos.x, 0, pos.z);
       this.scene.add(wall);
-      this.walls.push(wall);
+      walls.push(wall);
     });
+    
+    return walls;
+  }
+
+  /**
+   * Create rounded rectangle walls
+   * @private
+   */
+  _createRoundedRectWalls(level) {
+    const walls = [];
+    const wallMaterial = new THREE.ShaderMaterial({
+      uniforms: {
+        time: { value: 0 },
+        level: { value: level }
+      },
+      vertexShader: `
+        varying vec3 vPosition;
+        void main() {
+          vPosition = position;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform float time;
+        uniform float level;
+        varying vec3 vPosition;
+        void main() {
+          float pulse = sin(time * (3.0 + level * 0.5) + vPosition.x * 0.5) * 0.3 + 0.7;
+          vec3 color = mix(vec3(1.0, 0.2, 0.3), vec3(1.0, 0.4, 0.2), level / 10.0) * pulse;
+          float edge = smoothstep(0.8, 1.0, abs(vPosition.x / 0.5));
+          color += vec3(1.0, 0.5, 0.5) * edge;
+          gl_FragColor = vec4(color, 0.8);
+        }
+      `,
+      transparent: true
+    });
+
+    const width = ARENA.WIDTH;
+    const height = ARENA.HEIGHT;
+    const radius = 5;
+    const cornerSegments = 8;
+    
+    // Straight walls
+    const straightWalls = [
+      // Top
+      { x: 0, z: -height/2 - 1, w: width - radius * 2, d: 2 },
+      // Bottom
+      { x: 0, z: height/2 + 1, w: width - radius * 2, d: 2 },
+      // Left
+      { x: -width/2 - 1, z: 0, w: 2, d: height - radius * 2 },
+      // Right
+      { x: width/2 + 1, z: 0, w: 2, d: height - radius * 2 }
+    ];
+    
+    straightWalls.forEach(pos => {
+      const geometry = new THREE.BoxGeometry(pos.w, 2, pos.d);
+      const wall = new THREE.Mesh(geometry, wallMaterial.clone());
+      wall.position.set(pos.x, 0, pos.z);
+      this.scene.add(wall);
+      walls.push(wall);
+    });
+    
+    // Corner walls (curved)
+    const corners = [
+      { centerX: width/2 - radius, centerZ: -height/2 + radius, startAngle: Math.PI, endAngle: Math.PI * 1.5 },
+      { centerX: -width/2 + radius, centerZ: -height/2 + radius, startAngle: -Math.PI * 0.5, endAngle: 0 },
+      { centerX: -width/2 + radius, centerZ: height/2 - radius, startAngle: 0, endAngle: Math.PI * 0.5 },
+      { centerX: width/2 - radius, centerZ: height/2 - radius, startAngle: Math.PI * 0.5, endAngle: Math.PI }
+    ];
+    
+    corners.forEach(corner => {
+      for (let i = 0; i < cornerSegments; i++) {
+        const angle1 = corner.startAngle + (i / cornerSegments) * (corner.endAngle - corner.startAngle);
+        const angle2 = corner.startAngle + ((i + 1) / cornerSegments) * (corner.endAngle - corner.startAngle);
+        
+        const x1 = corner.centerX + Math.cos(angle1) * (radius + 1);
+        const z1 = corner.centerZ + Math.sin(angle1) * (radius + 1);
+        const x2 = corner.centerX + Math.cos(angle2) * (radius + 1);
+        const z2 = corner.centerZ + Math.sin(angle2) * (radius + 1);
+        
+        const wallLength = Math.sqrt((x2 - x1) ** 2 + (z2 - z1) ** 2);
+        const wallAngle = Math.atan2(z2 - z1, x2 - x1);
+        
+        const geometry = new THREE.BoxGeometry(wallLength + 0.1, 2, 2);
+        const wall = new THREE.Mesh(geometry, wallMaterial.clone());
+        
+        wall.position.set(
+          (x1 + x2) / 2,
+          0,
+          (z1 + z2) / 2
+        );
+        wall.rotation.y = -wallAngle;
+        
+        this.scene.add(wall);
+        walls.push(wall);
+      }
+    });
+    
+    return walls;
   }
 
   /**
@@ -264,8 +758,16 @@ export class Game {
     
     this.state.rng = new SeededRandom(this.state.seed + '_' + level);
     
-    // Update floor
+    // Update floor - recreate with new shape
+    const shape = ARENA.getShapeForLevel(level);
+    this.scene.remove(this.floor);
+    this.floor.geometry.dispose();
+    const { geometry } = this._createFloorGeometry(shape);
+    this.floor.geometry = geometry;
     this.floor.material.uniforms.level.value = level;
+    this.floor.material.uniforms.shapeType.value = this._getShapeTypeValue(shape);
+    this.scene.add(this.floor);
+    
     this._setupWalls(level);
     
     // Create player

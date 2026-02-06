@@ -5,7 +5,34 @@
 
 export const ARENA = {
   WIDTH: 30,
-  HEIGHT: 20
+  HEIGHT: 20,
+  SHAPES: {
+    RECTANGLE: 'rectangle',
+    CIRCLE: 'circle',
+    OVAL: 'oval',
+    DIAMOND: 'diamond',
+    OCTAGON: 'octagon',
+    CROSS: 'cross',
+    ROUNDED_RECT: 'rounded_rect',
+    HEXAGON: 'hexagon'
+  },
+  // Get arena shape based on level
+  getShapeForLevel(level) {
+    const shapes = [
+      this.SHAPES.RECTANGLE,
+      this.SHAPES.OVAL,
+      this.SHAPES.DIAMOND,
+      this.SHAPES.HEXAGON,
+      this.SHAPES.CIRCLE,
+      this.SHAPES.OCTAGON,
+      this.SHAPES.CROSS,
+      this.SHAPES.ROUNDED_RECT
+    ];
+    // Every 5 levels is a special octagon level
+    if (level % 5 === 0) return this.SHAPES.OCTAGON;
+    // Otherwise cycle through shapes based on level
+    return shapes[(level - 1) % shapes.length];
+  }
 };
 
 export const PLAYER = {

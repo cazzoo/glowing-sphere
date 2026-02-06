@@ -1,14 +1,25 @@
-- Make the stages not only squared, but with some variations
+- Extend available powerups to boost shield and dash
+- Add stage powerups (temporary ones) that lasts for some times only
 - Add leaderboard per seed
 - Add music, SFX, and audio
-convert the project from tree.js to babylon.js
+- convert the project from tree.js to babylon.js
+
+BUG
+========
+Zoom-out works only after zoom in has been triggered.
+Movable parts are not colliding anymore with sphere or opponents.
 
 PENDING
 ========
-- Make the project modularized, easy to maintain, POO and production-grade
+- Create a main menu with 3 game modes:
+  - single player: (with fixed stages, difficulty progression)
+  - random: you can choose difficulty among simple, medium, hard, hell. Difficulty level drives stage shape complexity and size, number of movable parts, number of enemies, number of collectibles
+  - Custom: You can select any parameters for generation. Seed is random 
 
 DONE
 ========
+- Make the stages not only squared, but with some variations
+- Make the project modularized, easy to maintain, POO and production-grade
 - Add eased zoom-in with R2 and eased zoom-out with L2. When released, camera gets back to default. Add equivalents for keyboard (right shift, left shift)
 - Add dash with R1 (with cooldown) and break with L1 for hard turn. Add equivalents for keyboard (right ctrl, left ctrl)
 - Display when controller gets disconnected (like it is when connected). move this message a bit upper than current position, it is overlapping with game hints
