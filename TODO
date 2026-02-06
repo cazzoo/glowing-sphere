@@ -1,13 +1,17 @@
-- for text hints, when using XBOX controller, show xbox icons, when swapping to keyboard, show keyboard, ...etc.
+- Display when controller gets disconnected (like it is when connected). move this message a bit upper than current position, it is overlapping with game hints
 - convert the project to phaser (if 2D) or babylon.js (if 3D) and make it modularized, easy to maintain, and production-grade
 - Make the stages not only squared, but with some variations
 - Add leaderboard per seed
-- Add dash with R1
+- Add dash with R1 (with cooldown) and break with L1 for hard turn
 - Add eased zoom-in with R2 and eased zoom-out with L2. When released, camera gets back to default.
 
 PENDING
+========
 
 DONE
+========
+- Make left stick navigating menu (as DPAD). Fix DPAD direction in-game (left is not going left, up not up, ...). Make navigation in menu possible with keyboard arrows and enter/escape keys
+- for text hints, when using XBOX controller, show xbox icons, when swapping to keyboard, show keyboard, ...etc.
 - Add navigation for each elements of the game for the current device (xbox, keyboard, phone touch input, ...)
 - Add controller controls (xbox, directinput, phone axis)
 - Add stage powerup, scores (based on time to complete the stage), rewards (in-game currency) and persistent power-ups that we can buy/upgrade out of the stage (in a menu item) but impacts the game run (rogue lite) and persist. Rewards needs to be selected, with maximum to possible slots, where we can swap the enabled power-ups._

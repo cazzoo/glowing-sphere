@@ -123,6 +123,63 @@
             background: rgba(0, 0, 0, 0.3);
             padding: 10px 20px;
             border-radius: 10px;
+            transition: all 0.3s ease;
+        }
+
+        /* Controller icon styles */
+        .controller-icon {
+            display: inline-block;
+            width: 24px;
+            height: 24px;
+            vertical-align: middle;
+            margin: 0 4px;
+        }
+
+        .xbox-icon {
+            background: linear-gradient(135deg, #107C10 0%, #0E6B0E 100%);
+            border-radius: 50%;
+            position: relative;
+        }
+
+        .xbox-icon::before {
+            content: 'X';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: white;
+            font-weight: bold;
+            font-size: 14px;
+        }
+
+        .keyboard-icon {
+            background: linear-gradient(135deg, #333 0%, #222 100%);
+            border-radius: 4px;
+            position: relative;
+        }
+
+        .keyboard-icon::before {
+            content: '⌨';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 14px;
+        }
+
+        .touch-icon {
+            background: linear-gradient(135deg, #666 0%, #444 100%);
+            border-radius: 4px;
+            position: relative;
+        }
+
+        .touch-icon::before {
+            content: '👆';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 14px;
         }
         
         #game-over, #level-complete {
@@ -1725,8 +1782,17 @@
         
         document.addEventListener('keydown', (e) => {
             keys[e.key.toLowerCase()] = true;
-            if (['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(e.key.toLowerCase())) {
+            
+            // Detect keyboard input and update hints
+            if (['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright', 'b'].includes(e.key.toLowerCase())) {
                 e.preventDefault();
+                
+                // Update device detection if keyboard is used
+                if (inputDevice.current !== 'keyboard' && !e.repeat) {
+                    inputDevice.current = 'keyboard';
+                    inputDevice.lastSwitchTime = Date.now();
+                    updateInstructionsHint();
+                }
             }
             
             // Open shop with 'B' key (pauses game during gameplay, or from level complete)
@@ -1790,6 +1856,15 @@
                 return { x: 0, y: 0, shopPressed: false, aPressed: false, bPressed: false, startPressed: false, dpadPressed: { x: 0, y: 0 } };
             }
 
+            // Update device detection if gamepad input is detected
+            const hasGamepadInput = gamepad.axes.some(axis => Math.abs(axis) > 0.1) ||
+                                    gamepad.buttons.some(button => button.pressed);
+            if (hasGamepadInput && inputDevice.current !== 'gamepad') {
+                inputDevice.current = 'gamepad';
+                inputDevice.lastSwitchTime = Date.now();
+                updateInstructionsHint();
+            }
+
             // Check if any menu is open
             const shopOpen = document.getElementById('shop-menu').style.display === 'block';
             const gameOverOpen = document.getElementById('game-over').style.display === 'block';
@@ -1811,11 +1886,12 @@
             let y = 0;
 
             // D-pad (buttons 12-15 on many controllers) - with safe checks
+            // Correct mapping for Xbox controllers: 12=Up, 13=Down, 14=Left, 15=Right
             let dpadX = 0, dpadY = 0;
-            if (isButtonPressed(12)) dpadX = -1; // D-pad left
-            if (isButtonPressed(13)) dpadY = 1;  // D-pad down
-            if (isButtonPressed(14)) dpadX = 1;  // D-pad right
-            if (isButtonPressed(15)) dpadY = -1; // D-pad up
+            if (isButtonPressed(14)) dpadX = -1; // D-pad left (button 14)
+            if (isButtonPressed(13)) dpadY = 1;  // D-pad down (button 13)
+            if (isButtonPressed(15)) dpadX = 1;  // D-pad right (button 15)
+            if (isButtonPressed(12)) dpadY = -1; // D-pad up (button 12)
 
             // During menu navigation, D-pad is only for menus, not movement
             if (menuOpen) {
@@ -1979,12 +2055,19 @@
                 }
             }
 
-            // Handle stick navigation (for menus) - only if D-pad not being used
-            if (Math.abs(input.x) > 0.5 || Math.abs(input.y) > 0.5) {
-                if (input.dpadPressed.x === 0 && input.dpadPressed.y === 0) {
+            // Handle stick navigation (for menus) - read directly from gamepad
+            // Get gamepad axes directly since input.x/y are 0 during menu mode
+            const gamepads = navigator.getGamepads();
+            const gamepad = gamepads[gamepadIndex];
+            if (gamepad && (input.dpadPressed.x === 0 && input.dpadPressed.y === 0)) {
+                const stickX = gamepad.axes[0] || 0; // Left stick X
+                const stickY = gamepad.axes[1] || 0; // Left stick Y
+                
+                // Only process stick input if there's actual movement above deadzone
+                if (Math.abs(stickX) > 0.3 || Math.abs(stickY) > 0.3) {
                     if (now - navState.lastDpadTime > navState.dpadCooldown) {
-                        const dirX = input.x > 0.3 ? 1 : (input.x < -0.3 ? -1 : 0);
-                        const dirY = input.y > 0.3 ? 1 : (input.y < -0.3 ? -1 : 0);
+                        const dirX = stickX > 0.3 ? 1 : (stickX < -0.3 ? -1 : 0);
+                        const dirY = stickY > 0.3 ? 1 : (stickY < -0.3 ? -1 : 0);
                         if (dirX !== 0 || dirY !== 0) {
                             moveFocus(dirX, dirY);
                             navState.lastDpadTime = now;
@@ -2105,6 +2188,96 @@
         }
 
         // ============================================
+        // INPUT DEVICE DETECTION & DYNAMIC HINTS
+        // ============================================
+        const inputDevice = {
+            current: 'keyboard', // 'keyboard', 'gamepad', 'touch'
+            lastActive: Date.now(),
+            switchCooldown: 1000, // ms before allowing device switch
+            lastSwitchTime: 0
+        };
+
+        // Device-specific hint texts
+        const deviceHints = {
+            keyboard: '<span class="controller-icon keyboard-icon"></span> WASD/Arrows to move • B for Shop',
+            gamepad: '<span class="controller-icon xbox-icon"></span> Left Stick/D-pad to move • B/Start for Shop',
+            touch: '<span class="controller-icon touch-icon"></span> Drag joystick to move • Tap 🛒 for Shop'
+        };
+
+        // Detect which input device is currently being used
+        function detectInputDevice() {
+            const now = Date.now();
+            
+            // Don't switch devices too frequently
+            if (now - inputDevice.lastSwitchTime < inputDevice.switchCooldown) {
+                return inputDevice.current;
+            }
+
+            let newDevice = inputDevice.current;
+
+            // Check for touch input (highest priority on mobile)
+            if (touchControls.active && (Math.abs(touchControls.joystickX) > 0.1 || Math.abs(touchControls.joystickY) > 0.1 || touchControls.shopPressed)) {
+                newDevice = 'touch';
+            }
+            // Check for gamepad input
+            else if (gamepadConnected) {
+                const gamepadInput = getGamepadInput();
+                if (Math.abs(gamepadInput.x) > 0.1 || Math.abs(gamepadInput.y) > 0.1 || gamepadInput.shopPressed || gamepadInput.aPressed || gamepadInput.bPressed) {
+                    newDevice = 'gamepad';
+                }
+            }
+            // Check for keyboard input
+            else {
+                const hasKeyboardInput = keys['w'] || keys['a'] || keys['s'] || keys['d'] || 
+                                         keys['arrowup'] || keys['arrowleft'] || keys['arrowdown'] || keys['arrowright'];
+                if (hasKeyboardInput) {
+                    newDevice = 'keyboard';
+                }
+            }
+
+            // Update device if changed
+            if (newDevice !== inputDevice.current) {
+                inputDevice.current = newDevice;
+                inputDevice.lastSwitchTime = now;
+                updateInstructionsHint();
+            }
+
+            return inputDevice.current;
+        }
+
+        // Update the instructions hint based on current device
+        function updateInstructionsHint() {
+            const instructions = document.getElementById('instructions');
+            if (instructions && deviceHints[inputDevice.current]) {
+                instructions.innerHTML = deviceHints[inputDevice.current];
+            }
+        }
+
+        // Initialize hints on load
+        document.addEventListener('DOMContentLoaded', () => {
+            // Set initial device based on what's available
+            if (isTouchDevice()) {
+                inputDevice.current = 'touch';
+            } else if (gamepadConnected) {
+                inputDevice.current = 'gamepad';
+            } else {
+                inputDevice.current = 'keyboard';
+            }
+            updateInstructionsHint();
+        });
+
+        // Update hints when gamepad connects/disconnects
+        window.addEventListener('gamepadconnected', () => {
+            inputDevice.current = 'gamepad';
+            updateInstructionsHint();
+        });
+
+        window.addEventListener('gamepaddisconnected', () => {
+            inputDevice.current = 'keyboard';
+            updateInstructionsHint();
+        });
+
+        // ============================================
         // TOUCH/VIRTUAL JOYSTICK SUPPORT (Mobile)
         // ============================================
         let touchControls = {
@@ -2146,6 +2319,13 @@
             };
 
             updateJoystick(touch.clientX, touch.clientY);
+            
+            // Update device detection for touch input
+            if (inputDevice.current !== 'touch') {
+                inputDevice.current = 'touch';
+                inputDevice.lastSwitchTime = Date.now();
+                updateInstructionsHint();
+            }
         }, { passive: false });
 
         joystick.addEventListener('touchmove', (e) => {
@@ -2207,6 +2387,14 @@
         shopBtn.addEventListener('touchstart', (e) => {
             e.preventDefault();
             touchControls.shopPressed = true;
+            
+            // Update device detection for touch input
+            if (inputDevice.current !== 'touch') {
+                inputDevice.current = 'touch';
+                inputDevice.lastSwitchTime = Date.now();
+                updateInstructionsHint();
+            }
+            
             if (!gameState.isGameOver && document.getElementById('shop-menu').style.display !== 'block') {
                 if (gameState.isLevelComplete) {
                     document.getElementById('level-complete').style.display = 'none';
@@ -2519,6 +2707,29 @@
 
         // Add keyboard navigation support
         document.addEventListener('keydown', (e) => {
+            // Check if any menu is open for arrow key navigation
+            const shopOpen = document.getElementById('shop-menu').style.display === 'block';
+            const gameOverOpen = document.getElementById('game-over').style.display === 'block';
+            const levelCompleteOpen = document.getElementById('level-complete').style.display === 'block';
+            const menuOpen = shopOpen || gameOverOpen || levelCompleteOpen;
+            
+            // Arrow key navigation for menus
+            if (menuOpen && ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+                e.preventDefault();
+                const now = Date.now();
+                if (now - navState.lastDpadTime > navState.dpadCooldown) {
+                    let dirX = 0, dirY = 0;
+                    switch(e.key) {
+                        case 'ArrowUp': dirY = -1; break;
+                        case 'ArrowDown': dirY = 1; break;
+                        case 'ArrowLeft': dirX = -1; break;
+                        case 'ArrowRight': dirX = 1; break;
+                    }
+                    moveFocus(dirX, dirY);
+                    navState.lastDpadTime = now;
+                }
+            }
+            
             if (e.key === 'Tab') {
                 e.preventDefault();
                 // Navigate through focusable elements
@@ -2548,6 +2759,9 @@
         
         function animate() {
             requestAnimationFrame(animate);
+
+            // Detect current input device and update hints
+            detectInputDevice();
 
             // Handle controller navigation for menus
             handleControllerNavigation();
