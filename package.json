@@ -1,13 +1,27 @@
 {
   "name": "glowing-sphere",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "A modular, production-grade 3D star collector game built with Three.js",
+  "type": "module",
+  "main": "src/main.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "serve": "vite preview --port 8000"
   },
-  "keywords": [],
+  "keywords": [
+    "game",
+    "three.js",
+    "webgl",
+    "3d"
+  ],
   "author": "",
   "license": "ISC",
-  "type": "commonjs"
+  "devDependencies": {
+    "vite": "^5.0.0"
+  },
+  "dependencies": {
+    "three": "^0.160.0"
+  }
 }
