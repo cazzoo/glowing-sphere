@@ -1178,6 +1178,90 @@
         });
         const playerGlow = new THREE.Mesh(glowGeometry, glowMaterial);
         player.add(playerGlow);
+
+        // Shooting star trail effect (multiple segments for dash)
+        const trailSegments = 8;
+        const dashTrailSegments = [];
+        
+        for (let i = 0; i < trailSegments; i++) {
+            const size = 0.8 - (i * 0.08); // Smaller segments further back
+            const opacity = 0.5 - (i * 0.05); // More transparent further back
+            
+            const trailGeometry = new THREE.SphereGeometry(size, 16, 16);
+            const trailMaterial = new THREE.ShaderMaterial({
+                uniforms: {
+                    time: { value: 0 },
+                    opacity: { value: opacity }
+                },
+                vertexShader: `
+                    varying vec3 vNormal;
+                    varying vec3 vPosition;
+                    void main() {
+                        vNormal = normalize(normalMatrix * normal);
+                        vPosition = position;
+                        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                    }
+                `,
+                fragmentShader: `
+                    uniform float time;
+                    uniform float opacity;
+                    varying vec3 vNormal;
+                    varying vec3 vPosition;
+                    void main() {
+                        vec3 viewDir = normalize(cameraPosition - vPosition);
+                        float fresnel = pow(1.0 - dot(vNormal, viewDir), 2.0);
+                        float pulse = sin(time * 8.0) * 0.3 + 0.7;
+                        
+                        // Color gradient from cyan to white to orange like a shooting star
+                        vec3 color = mix(vec3(0.5, 0.8, 1.0), vec3(1.0, 0.9, 0.5), vPosition.y * 0.5 + 0.5);
+                        color += vec3(0.3, 0.6, 1.0) * fresnel * 2.0 * pulse;
+                        
+                        gl_FragColor = vec4(color, opacity * pulse);
+                    }
+                `,
+                transparent: true,
+                blending: THREE.AdditiveBlending
+            });
+            
+            const trailSegment = new THREE.Mesh(trailGeometry, trailMaterial);
+            trailSegment.visible = false;
+            scene.add(trailSegment);
+            dashTrailSegments.push(trailSegment);
+        }
+
+        // Break shield indicator (appears in front of sphere when breaking)
+        const shieldGeometry = new THREE.CircleGeometry(1.2, 32);
+        const shieldMaterial = new THREE.ShaderMaterial({
+            uniforms: {
+                time: { value: 0 }
+            },
+            vertexShader: `
+                varying vec2 vUv;
+                void main() {
+                    vUv = uv;
+                    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                }
+            `,
+            fragmentShader: `
+                uniform float time;
+                varying vec2 vUv;
+                void main() {
+                    vec2 center = vUv - 0.5;
+                    float dist = length(center);
+                    float ring = smoothstep(0.3, 0.4, dist) * smoothstep(0.5, 0.4, dist);
+                    float pulse = sin(time * 6.0) * 0.3 + 0.7;
+                    vec3 shieldColor = vec3(1.0, 0.5, 0.2) * ring * pulse;
+                    float alpha = ring * pulse * 0.6;
+                    gl_FragColor = vec4(shieldColor, alpha);
+                }
+            `,
+            transparent: true,
+            side: THREE.DoubleSide,
+            blending: THREE.AdditiveBlending
+        });
+        const breakShield = new THREE.Mesh(shieldGeometry, shieldMaterial);
+        breakShield.visible = false;
+        scene.add(breakShield);
         
         // Player physics
         const playerPhysics = {
@@ -1188,15 +1272,15 @@
             maxSpeed: 0.25,         // Maximum speed
             radius: 0.8,
             // Dash mechanics - one-time boost to max speed + 10%
-            dashSpeedBoost: 1.4,    // Speed boost multiplier (max speed + 40%)
+            dashSpeedBoost: 2.0,    // Speed boost multiplier (max speed + 100%)
             dashDuration: 0.3,      // How long the boosted speed is maintained
             dashCooldown: 1.5,      // Cooldown between dashes in seconds
             dashActive: false,      // Is dash currently active
             dashTimeRemaining: 0,   // Time remaining on dash
             dashCooldownRemaining: 0, // Time remaining on cooldown
-            // Handbrake mechanics - car-style drift (maintains speed, allows sliding)
-            handbrakeFriction: 0.96, // Very low friction for drift (maintains speed, slides more)
-            handbrakeDuration: 0.6, // Longer drift duration
+            // Handbrake mechanics - noticeable slowdown while maintaining drift
+            handbrakeFriction: 0.92, // Slows down noticeably but allows drift (8% slowdown per frame)
+            handbrakeDuration: 0.6, // Drift duration
             handbrakeActive: false, // Is handbrake currently active
             handbrakeTimeRemaining: 0, // Time remaining on handbrake
             handbrakeCooldownRemaining: 0 // Time remaining on handbrake cooldown
@@ -1830,6 +1914,18 @@
                     keys['leftctrl'] = true;
                 }
             }
+
+            // Track Shift keys for zoom in/out
+            if (e.key === 'Shift') {
+                if (e.location === 1) {
+                    keys['leftshift'] = true;  // L2 equivalent - zoom out
+                } else if (e.location === 2) {
+                    keys['rightshift'] = true; // R2 equivalent - zoom in
+                } else {
+                    // Fallback for browsers that don't support location
+                    keys['leftshift'] = true;
+                }
+            }
             
             // Detect keyboard input and update hints
             if (['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright', 'b'].includes(e.key.toLowerCase())) {
@@ -1875,6 +1971,17 @@
                     keys['leftctrl'] = false;
                 }
             }
+
+            // Clear Shift keys
+            if (e.key === 'Shift') {
+                if (e.location === 1) {
+                    keys['leftshift'] = false;
+                } else if (e.location === 2) {
+                    keys['rightshift'] = false;
+                } else {
+                    keys['leftshift'] = false;
+                }
+            }
         });
 
         // ============================================
@@ -1918,14 +2025,14 @@
         // Get gamepad input (call this every frame)
         function getGamepadInput() {
             if (!gamepadConnected || gamepadIndex === null) {
-                return { x: 0, y: 0, shopPressed: false, aPressed: false, bPressed: false, startPressed: false, dpadPressed: { x: 0, y: 0 }, r1Pressed: false, l1Pressed: false };
+                return { x: 0, y: 0, shopPressed: false, aPressed: false, bPressed: false, startPressed: false, dpadPressed: { x: 0, y: 0 }, r1Pressed: false, l1Pressed: false, r2Pressed: 0, l2Pressed: 0 };
             }
 
             const gamepads = navigator.getGamepads();
             const gamepad = gamepads[gamepadIndex];
 
             if (!gamepad) {
-                return { x: 0, y: 0, shopPressed: false, aPressed: false, bPressed: false, startPressed: false, dpadPressed: { x: 0, y: 0 }, r1Pressed: false, l1Pressed: false };
+                return { x: 0, y: 0, shopPressed: false, aPressed: false, bPressed: false, startPressed: false, dpadPressed: { x: 0, y: 0 }, r1Pressed: false, l1Pressed: false, r2Pressed: 0, l2Pressed: 0 };
             }
 
             // Update device detection if gamepad input is detected
@@ -1979,7 +2086,9 @@
                     startPressed: isButtonPressed(startButtonIndex) || isButtonPressed(selectButtonIndex),
                     dpadPressed: { x: dpadX, y: dpadY },
                     r1Pressed: false,
-                    l1Pressed: false
+                    l1Pressed: false,
+                    r2Pressed: 0,
+                    l2Pressed: 0
                 };
             }
 
@@ -2008,6 +2117,31 @@
                 y = dpadY;
             }
 
+            // Get trigger values (R2 and L2) - check both buttons and axes
+            // Different controllers expose triggers differently
+            let r2Trigger = 0;
+            let l2Trigger = 0;
+
+            // Try buttons array first (buttons 6 and 7)
+            if (gamepad.buttons[7] && gamepad.buttons[7].value !== undefined) {
+                r2Trigger = gamepad.buttons[7].value;
+            }
+            if (gamepad.buttons[6] && gamepad.buttons[6].value !== undefined) {
+                l2Trigger = gamepad.buttons[6].value;
+            }
+
+            // Also try axes array (some controllers use axes 4 and 5 for triggers)
+            if (r2Trigger === 0 && gamepad.axes.length > 5) {
+                r2Trigger = (gamepad.axes[5] + 1) / 2; // Convert from -1..1 to 0..1
+            }
+            if (l2Trigger === 0 && gamepad.axes.length > 4) {
+                l2Trigger = (gamepad.axes[4] + 1) / 2; // Convert from -1..1 to 0..1
+            }
+
+            // Normalize to 0-1 range
+            r2Trigger = Math.max(0, Math.min(1, r2Trigger));
+            l2Trigger = Math.max(0, Math.min(1, l2Trigger));
+
             return {
                 x: Math.max(-1, Math.min(1, x)),
                 y: Math.max(-1, Math.min(1, y)),
@@ -2017,7 +2151,9 @@
                 startPressed: isButtonPressed(startButtonIndex) || isButtonPressed(selectButtonIndex),
                 dpadPressed: { x: dpadX, y: dpadY },
                 r1Pressed: isButtonPressed(r1ButtonIndex),
-                l1Pressed: isButtonPressed(l1ButtonIndex)
+                l1Pressed: isButtonPressed(l1ButtonIndex),
+                r2Pressed: r2Trigger, // R2 trigger value (0-1, analog)
+                l2Pressed: l2Trigger  // L2 trigger value (0-1, analog)
             };
         }
 
@@ -2277,8 +2413,8 @@
 
         // Device-specific hint texts
         const deviceHints = {
-            keyboard: '<span class="controller-icon keyboard-icon"></span> WASD/Arrows to move • R-Ctrl: Dash • L-Ctrl: Break • B for Shop',
-            gamepad: '<span class="controller-icon xbox-icon"></span> Left Stick/D-pad to move • R1: Dash • L1: Break • B/Start for Shop',
+            keyboard: '<span class="controller-icon keyboard-icon"></span> WASD/Arrows to move • R-Ctrl: Dash • L-Ctrl: Break • R-Shift: Zoom In • L-Shift: Zoom Out • B for Shop',
+            gamepad: '<span class="controller-icon xbox-icon"></span> Left Stick/D-pad to move • R1: Dash • L1: Break • R2: Zoom In • L2: Zoom Out • B/Start for Shop',
             touch: '<span class="controller-icon touch-icon"></span> Drag joystick to move • Tap 🛒 for Shop'
         };
 
@@ -2498,16 +2634,20 @@
             let x = 0, y = 0;
             let dashPressed = false;
             let breakPressed = false;
+            let zoomInPressed = false;
+            let zoomOutPressed = false;
 
             // Keyboard input
             if (keys['w'] || keys['arrowup']) y -= 1;
             if (keys['s'] || keys['arrowdown']) y += 1;
             if (keys['a'] || keys['arrowleft']) x -= 1;
             if (keys['d'] || keys['arrowright']) x += 1;
-            
-            // Keyboard dash/break
+
+            // Keyboard dash/break/zoom
             if (keys['rightctrl']) dashPressed = true;
             if (keys['leftctrl']) breakPressed = true;
+            if (keys['rightshift']) zoomInPressed = true;  // R2 equivalent - zoom in
+            if (keys['leftshift']) zoomOutPressed = true;  // L2 equivalent - zoom out
 
             // Gamepad input (overrides keyboard if active)
             const gamepadInput = getGamepadInput();
@@ -2517,6 +2657,7 @@
             }
             if (gamepadInput.r1Pressed) dashPressed = true;
             if (gamepadInput.l1Pressed) breakPressed = true;
+            // R2/L2 are analog triggers - pass through raw values, handle threshold in zoom logic
 
             // Touch/virtual joystick input (highest priority)
             if (touchControls.active && (touchControls.joystickX !== 0 || touchControls.joystickY !== 0)) {
@@ -2524,7 +2665,7 @@
                 y = touchControls.joystickY;
             }
 
-            return { x, y, dashPressed, breakPressed };
+            return { x, y, dashPressed, breakPressed, zoomInPressed, zoomOutPressed, r2Value: gamepadInput.r2Pressed, l2Value: gamepadInput.l2Pressed };
         }
 
         // Collision detection
@@ -2842,10 +2983,20 @@
         let invincibilityTime = 0;
         let shieldActive = false;
         let shieldTimeRemaining = 0;
-        
+
         // Track previous button states for one-time activation detection
         let prevDashPressed = false;
         let prevBreakPressed = false;
+
+        // Camera zoom state
+        const cameraZoom = {
+            currentHeight: 25,      // Current Y position (height)
+            targetHeight: 25,       // Target Y position
+            minHeight: 15,          // Closest zoom (highest)
+            maxHeight: 35,          // Farthest zoom (lowest)
+            zoomSpeed: 0.15,        // Easing speed for zoom transitions (faster)
+            defaultHeight: 25       // Default camera height
+        };
         
         function animate() {
             requestAnimationFrame(animate);
@@ -2914,6 +3065,56 @@
             sphereMaterial.uniforms.time.value = time;
             glowMaterial.uniforms.time.value = time;
             floorMaterial.uniforms.time.value = time;
+
+            // Update shooting star trail - multiple segments following behind player
+            dashTrailSegments.forEach((segment, index) => {
+                segment.visible = playerPhysics.dashActive;
+                segment.material.uniforms.time.value = time;
+
+                if (playerPhysics.dashActive) {
+                    // Calculate opposite direction of movement
+                    const speed = Math.sqrt(playerPhysics.velocity.x ** 2 + playerPhysics.velocity.z ** 2);
+                    if (speed > 0.01) {
+                        // Each segment is positioned further behind
+                        const baseDistance = 1.2; // Distance from player to first segment
+                        const segmentSpacing = 0.4; // Distance between segments
+                        const trailDistance = baseDistance + (index * segmentSpacing);
+
+                        const trailX = playerPhysics.position.x - (playerPhysics.velocity.x / speed) * trailDistance;
+                        const trailZ = playerPhysics.position.z - (playerPhysics.velocity.z / speed) * trailDistance;
+
+                        segment.position.set(trailX, 0, trailZ);
+                    } else {
+                        // If not moving, segments cluster at player position
+                        segment.position.copy(playerPhysics.position);
+                    }
+                }
+            });
+
+            // Update break shield indicator - appears in front of player in direction of movement
+            if (breakShield) {
+                breakShield.visible = playerPhysics.handbrakeActive;
+                breakShield.material.uniforms.time.value = time;
+
+                if (playerPhysics.handbrakeActive) {
+                    const speed = Math.sqrt(playerPhysics.velocity.x ** 2 + playerPhysics.velocity.z ** 2);
+                    if (speed > 0.01) {
+                        // Shield is positioned 1.5 units in front of player in direction of movement
+                        const shieldDistance = 1.5;
+                        const shieldX = playerPhysics.position.x + (playerPhysics.velocity.x / speed) * shieldDistance;
+                        const shieldZ = playerPhysics.position.z + (playerPhysics.velocity.z / speed) * shieldDistance;
+
+                        breakShield.position.set(shieldX, 0, shieldZ);
+
+                        // Rotate shield to face movement direction
+                        const angle = Math.atan2(playerPhysics.velocity.x, playerPhysics.velocity.z);
+                        breakShield.rotation.y = -angle; // Negative because CircleGeometry faces +Z
+                    } else {
+                        // If not moving, shield is at player position
+                        breakShield.position.copy(playerPhysics.position);
+                    }
+                }
+            }
             walls.forEach(wall => {
                 wall.material.uniforms.time.value = time;
             });
@@ -2971,6 +3172,10 @@
             let inputZ = input.y;
             const dashPressed = input.dashPressed;
             const breakPressed = input.breakPressed;
+            const zoomInPressed = input.zoomInPressed;
+            const zoomOutPressed = input.zoomOutPressed;
+            const r2Value = input.r2Value || 0;
+            const l2Value = input.l2Value || 0;
 
             // Update dash cooldown
             playerPhysics.dashCooldownRemaining = Math.max(0, playerPhysics.dashCooldownRemaining - 0.016);
@@ -3001,6 +3206,36 @@
             // Store current button states for next frame
             prevDashPressed = dashPressed;
             prevBreakPressed = breakPressed;
+
+            // Handle camera zoom with easing - follows trigger pressure directly
+            // R2 / Right Shift: Zoom in (lower height = closer camera)
+            // L2 / Left Shift: Zoom out (higher height = farther camera)
+
+            // Calculate zoom target based on trigger values
+            // If R2 is pressed (even partially), zoom in proportionally
+            // If L2 is pressed (even partially), zoom out proportionally
+            // If neither is pressed, return to default
+            const hasZoomInput = r2Value > 0.01 || l2Value > 0.01 || zoomInPressed || zoomOutPressed;
+
+            if (r2Value > 0.01) {
+                // R2 pressed - zoom in based on trigger pressure (0-1)
+                cameraZoom.targetHeight = cameraZoom.defaultHeight - (r2Value * (cameraZoom.defaultHeight - cameraZoom.minHeight));
+            } else if (l2Value > 0.01) {
+                // L2 pressed - zoom out based on trigger pressure (0-1)
+                cameraZoom.targetHeight = cameraZoom.defaultHeight + (l2Value * (cameraZoom.maxHeight - cameraZoom.defaultHeight));
+            } else if (zoomInPressed) {
+                // Keyboard zoom in (Right Shift) - full zoom
+                cameraZoom.targetHeight = cameraZoom.minHeight;
+            } else if (zoomOutPressed) {
+                // Keyboard zoom out (Left Shift) - full zoom
+                cameraZoom.targetHeight = cameraZoom.maxHeight;
+            } else {
+                // No zoom input - return to default
+                cameraZoom.targetHeight = cameraZoom.defaultHeight;
+            }
+
+            // Smoothly interpolate current height toward target (easing)
+            cameraZoom.currentHeight += (cameraZoom.targetHeight - cameraZoom.currentHeight) * cameraZoom.zoomSpeed;
 
             // Normalize diagonal input
             if (inputX !== 0 && inputZ !== 0) {
@@ -3529,7 +3764,10 @@
             // Update camera to follow player (smooth)
             const targetCamX = playerPhysics.position.x * 0.3;
             const targetCamZ = playerPhysics.position.z * 0.3 + 15;
+            const targetCamY = cameraZoom.currentHeight; // Use zoom height
+
             camera.position.x += (targetCamX - camera.position.x) * 0.05;
+            camera.position.y += (targetCamY - camera.position.y) * 0.05;
             camera.position.z += (targetCamZ - camera.position.z) * 0.05;
             camera.lookAt(playerPhysics.position.x * 0.5, 0, playerPhysics.position.z * 0.5);
             
