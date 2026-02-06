@@ -302,6 +302,23 @@
             text-shadow: 0 0 10px rgba(100, 255, 100, 0.6);
         }
 
+        #dash-indicator {
+            position: absolute;
+            top: 155px;
+            left: 20px;
+            color: rgba(255, 200, 50, 0.9);
+            font-size: 14px;
+            z-index: 100;
+            pointer-events: none;
+            display: block;
+            text-shadow: 0 0 10px rgba(255, 200, 50, 0.6);
+        }
+
+        #dash-indicator span {
+            color: rgba(100, 200, 255, 0.9);
+            font-weight: bold;
+        }
+
         #pause-indicator {
             position: absolute;
             top: 50%;
@@ -568,7 +585,7 @@
         /* Controller Status */
         #controller-status {
             position: absolute;
-            bottom: 30px;
+            bottom: 75px;
             left: 50%;
             transform: translateX(-50%);
             color: rgba(100, 255, 100, 0.8);
@@ -579,6 +596,10 @@
             background: rgba(0, 0, 0, 0.5);
             padding: 5px 15px;
             border-radius: 15px;
+        }
+
+        #controller-status.disconnected {
+            color: rgba(255, 100, 100, 0.8);
         }
 
         /* Focus indicators for controller navigation */
@@ -643,6 +664,8 @@
     <div id="power-ups-display"></div>
     
     <div id="shield-indicator">🛡️ Shield Active: <span id="shield-time">0.0</span>s</div>
+    
+    <div id="dash-indicator">⚡ Dash: <span id="dash-status">READY</span> | 🛑 Break: <span id="break-status">READY</span></div>
     
     <div id="pause-indicator">⏸️ PAUSED</div>
     
@@ -1163,7 +1186,20 @@
             acceleration: 0.18,     // Acceleration for responsive controls
             friction: 0.985,        // Friction for controlled sliding
             maxSpeed: 0.25,         // Maximum speed
-            radius: 0.8
+            radius: 0.8,
+            // Dash mechanics - one-time boost to max speed + 10%
+            dashSpeedBoost: 1.4,    // Speed boost multiplier (max speed + 40%)
+            dashDuration: 0.3,      // How long the boosted speed is maintained
+            dashCooldown: 1.5,      // Cooldown between dashes in seconds
+            dashActive: false,      // Is dash currently active
+            dashTimeRemaining: 0,   // Time remaining on dash
+            dashCooldownRemaining: 0, // Time remaining on cooldown
+            // Handbrake mechanics - car-style drift (maintains speed, allows sliding)
+            handbrakeFriction: 0.96, // Very low friction for drift (maintains speed, slides more)
+            handbrakeDuration: 0.6, // Longer drift duration
+            handbrakeActive: false, // Is handbrake currently active
+            handbrakeTimeRemaining: 0, // Time remaining on handbrake
+            handbrakeCooldownRemaining: 0 // Time remaining on handbrake cooldown
         };
         
         // Collectibles (stars)
@@ -1783,6 +1819,18 @@
         document.addEventListener('keydown', (e) => {
             keys[e.key.toLowerCase()] = true;
             
+            // Track Control keys for dash/break
+            if (e.key === 'Control') {
+                if (e.location === 1) {
+                    keys['leftctrl'] = true;
+                } else if (e.location === 2) {
+                    keys['rightctrl'] = true;
+                } else {
+                    // Fallback for browsers that don't support location
+                    keys['leftctrl'] = true;
+                }
+            }
+            
             // Detect keyboard input and update hints
             if (['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright', 'b'].includes(e.key.toLowerCase())) {
                 e.preventDefault();
@@ -1816,6 +1864,17 @@
         
         document.addEventListener('keyup', (e) => {
             keys[e.key.toLowerCase()] = false;
+            
+            // Clear Control keys
+            if (e.key === 'Control') {
+                if (e.location === 1) {
+                    keys['leftctrl'] = false;
+                } else if (e.location === 2) {
+                    keys['rightctrl'] = false;
+                } else {
+                    keys['leftctrl'] = false;
+                }
+            }
         });
 
         // ============================================
@@ -1830,8 +1889,10 @@
             console.log('Gamepad connected:', e.gamepad.id);
             gamepadIndex = e.gamepad.index;
             gamepadConnected = true;
-            document.getElementById('controller-status').style.display = 'block';
-            document.getElementById('controller-status').textContent = `🎮 ${e.gamepad.id.substring(0, 30)} Connected`;
+            const statusEl = document.getElementById('controller-status');
+            statusEl.textContent = `🎮 ${e.gamepad.id.substring(0, 30)} Connected`;
+            statusEl.classList.remove('disconnected');
+            statusEl.style.display = 'block';
         });
 
         window.addEventListener('gamepaddisconnected', (e) => {
@@ -1839,21 +1900,32 @@
             if (gamepadIndex === e.gamepad.index) {
                 gamepadIndex = null;
                 gamepadConnected = false;
-                document.getElementById('controller-status').style.display = 'none';
+                const statusEl = document.getElementById('controller-status');
+                statusEl.textContent = `🎮 ${e.gamepad.id.substring(0, 30)} Disconnected`;
+                statusEl.classList.add('disconnected');
+                statusEl.style.display = 'block';
+                
+                // Hide disconnected message after 3 seconds
+                setTimeout(() => {
+                    if (!gamepadConnected) {
+                        statusEl.style.display = 'none';
+                        statusEl.classList.remove('disconnected');
+                    }
+                }, 3000);
             }
         });
 
         // Get gamepad input (call this every frame)
         function getGamepadInput() {
             if (!gamepadConnected || gamepadIndex === null) {
-                return { x: 0, y: 0, shopPressed: false, aPressed: false, bPressed: false, startPressed: false, dpadPressed: { x: 0, y: 0 } };
+                return { x: 0, y: 0, shopPressed: false, aPressed: false, bPressed: false, startPressed: false, dpadPressed: { x: 0, y: 0 }, r1Pressed: false, l1Pressed: false };
             }
 
             const gamepads = navigator.getGamepads();
             const gamepad = gamepads[gamepadIndex];
 
             if (!gamepad) {
-                return { x: 0, y: 0, shopPressed: false, aPressed: false, bPressed: false, startPressed: false, dpadPressed: { x: 0, y: 0 } };
+                return { x: 0, y: 0, shopPressed: false, aPressed: false, bPressed: false, startPressed: false, dpadPressed: { x: 0, y: 0 }, r1Pressed: false, l1Pressed: false };
             }
 
             // Update device detection if gamepad input is detected
@@ -1876,6 +1948,8 @@
             const bButtonIndex = 1;    // B button on Xbox (cancel/back)
             const startButtonIndex = 9; // Start button
             const selectButtonIndex = 8; // Select button (alternative to Start)
+            const l1ButtonIndex = 4;   // L1 / Left Bumper (break)
+            const r1ButtonIndex = 5;   // R1 / Right Bumper (dash)
 
             // Helper function to safely check button
             const isButtonPressed = (index) => {
@@ -1903,7 +1977,9 @@
                     aPressed: isButtonPressed(aButtonIndex),
                     bPressed: isButtonPressed(bButtonIndex),
                     startPressed: isButtonPressed(startButtonIndex) || isButtonPressed(selectButtonIndex),
-                    dpadPressed: { x: dpadX, y: dpadY }
+                    dpadPressed: { x: dpadX, y: dpadY },
+                    r1Pressed: false,
+                    l1Pressed: false
                 };
             }
 
@@ -1939,7 +2015,9 @@
                 aPressed: isButtonPressed(aButtonIndex),
                 bPressed: isButtonPressed(bButtonIndex),
                 startPressed: isButtonPressed(startButtonIndex) || isButtonPressed(selectButtonIndex),
-                dpadPressed: { x: dpadX, y: dpadY }
+                dpadPressed: { x: dpadX, y: dpadY },
+                r1Pressed: isButtonPressed(r1ButtonIndex),
+                l1Pressed: isButtonPressed(l1ButtonIndex)
             };
         }
 
@@ -2199,8 +2277,8 @@
 
         // Device-specific hint texts
         const deviceHints = {
-            keyboard: '<span class="controller-icon keyboard-icon"></span> WASD/Arrows to move • B for Shop',
-            gamepad: '<span class="controller-icon xbox-icon"></span> Left Stick/D-pad to move • B/Start for Shop',
+            keyboard: '<span class="controller-icon keyboard-icon"></span> WASD/Arrows to move • R-Ctrl: Dash • L-Ctrl: Break • B for Shop',
+            gamepad: '<span class="controller-icon xbox-icon"></span> Left Stick/D-pad to move • R1: Dash • L1: Break • B/Start for Shop',
             touch: '<span class="controller-icon touch-icon"></span> Drag joystick to move • Tap 🛒 for Shop'
         };
 
@@ -2418,12 +2496,18 @@
         // ============================================
         function getInput() {
             let x = 0, y = 0;
+            let dashPressed = false;
+            let breakPressed = false;
 
             // Keyboard input
             if (keys['w'] || keys['arrowup']) y -= 1;
             if (keys['s'] || keys['arrowdown']) y += 1;
             if (keys['a'] || keys['arrowleft']) x -= 1;
             if (keys['d'] || keys['arrowright']) x += 1;
+            
+            // Keyboard dash/break
+            if (keys['rightctrl']) dashPressed = true;
+            if (keys['leftctrl']) breakPressed = true;
 
             // Gamepad input (overrides keyboard if active)
             const gamepadInput = getGamepadInput();
@@ -2431,6 +2515,8 @@
                 x = gamepadInput.x;
                 y = gamepadInput.y;
             }
+            if (gamepadInput.r1Pressed) dashPressed = true;
+            if (gamepadInput.l1Pressed) breakPressed = true;
 
             // Touch/virtual joystick input (highest priority)
             if (touchControls.active && (touchControls.joystickX !== 0 || touchControls.joystickY !== 0)) {
@@ -2438,7 +2524,7 @@
                 y = touchControls.joystickY;
             }
 
-            return { x, y };
+            return { x, y, dashPressed, breakPressed };
         }
 
         // Collision detection
@@ -2757,6 +2843,10 @@
         let shieldActive = false;
         let shieldTimeRemaining = 0;
         
+        // Track previous button states for one-time activation detection
+        let prevDashPressed = false;
+        let prevBreakPressed = false;
+        
         function animate() {
             requestAnimationFrame(animate);
 
@@ -2792,6 +2882,32 @@
                 document.getElementById('shield-time').textContent = shieldTimeRemaining.toFixed(1);
             } else {
                 shieldIndicator.style.display = 'none';
+            }
+            
+            // Update dash indicator
+            const dashStatus = document.getElementById('dash-status');
+            if (playerPhysics.dashActive) {
+                dashStatus.textContent = 'ACTIVE!';
+                dashStatus.style.color = 'rgba(255, 255, 100, 1)';
+            } else if (playerPhysics.dashCooldownRemaining > 0) {
+                dashStatus.textContent = playerPhysics.dashCooldownRemaining.toFixed(1) + 's';
+                dashStatus.style.color = 'rgba(255, 100, 100, 0.9)';
+            } else {
+                dashStatus.textContent = 'READY';
+                dashStatus.style.color = 'rgba(100, 255, 100, 0.9)';
+            }
+            
+            // Update break indicator
+            const breakStatus = document.getElementById('break-status');
+            if (playerPhysics.handbrakeActive) {
+                breakStatus.textContent = 'ACTIVE!';
+                breakStatus.style.color = 'rgba(255, 150, 50, 1)';
+            } else if (playerPhysics.handbrakeCooldownRemaining > 0) {
+                breakStatus.textContent = playerPhysics.handbrakeCooldownRemaining.toFixed(1) + 's';
+                breakStatus.style.color = 'rgba(255, 100, 100, 0.9)';
+            } else {
+                breakStatus.textContent = 'READY';
+                breakStatus.style.color = 'rgba(100, 255, 100, 0.9)';
             }
             
             // Update shader uniforms
@@ -2853,6 +2969,38 @@
             const input = getInput();
             let inputX = input.x;
             let inputZ = input.y;
+            const dashPressed = input.dashPressed;
+            const breakPressed = input.breakPressed;
+
+            // Update dash cooldown
+            playerPhysics.dashCooldownRemaining = Math.max(0, playerPhysics.dashCooldownRemaining - 0.016);
+            
+            // Update dash active timer
+            playerPhysics.dashTimeRemaining = Math.max(0, playerPhysics.dashTimeRemaining - 0.016);
+            playerPhysics.dashActive = playerPhysics.dashTimeRemaining > 0;
+
+            // Handle dash activation (R1 or Right Ctrl) - one-time trigger on button press
+            if (dashPressed && !prevDashPressed && !playerPhysics.dashActive && playerPhysics.dashCooldownRemaining <= 0) {
+                playerPhysics.dashActive = true;
+                playerPhysics.dashTimeRemaining = playerPhysics.dashDuration;
+                playerPhysics.dashCooldownRemaining = playerPhysics.dashCooldown;
+            }
+
+            // Update break cooldown and active timer
+            playerPhysics.handbrakeCooldownRemaining = Math.max(0, playerPhysics.handbrakeCooldownRemaining - 0.016);
+            playerPhysics.handbrakeTimeRemaining = Math.max(0, playerPhysics.handbrakeTimeRemaining - 0.016);
+            playerPhysics.handbrakeActive = playerPhysics.handbrakeTimeRemaining > 0;
+
+            // Handle handbrake activation (L1 or Left Ctrl) - one-time trigger on button press
+            if (breakPressed && !prevBreakPressed && !playerPhysics.handbrakeActive && playerPhysics.handbrakeCooldownRemaining <= 0) {
+                playerPhysics.handbrakeActive = true;
+                playerPhysics.handbrakeTimeRemaining = playerPhysics.handbrakeDuration;
+                playerPhysics.handbrakeCooldownRemaining = playerPhysics.dashCooldown; // Same cooldown as dash
+            }
+
+            // Store current button states for next frame
+            prevDashPressed = dashPressed;
+            prevBreakPressed = breakPressed;
 
             // Normalize diagonal input
             if (inputX !== 0 && inputZ !== 0) {
@@ -2860,19 +3008,35 @@
                 inputZ *= 0.707;
             }
             
-            // Apply acceleration - SLOWER for more control
-            playerPhysics.velocity.x += inputX * playerPhysics.acceleration * 0.1;
-            playerPhysics.velocity.z += inputZ * playerPhysics.acceleration * 0.1;
+            // Calculate effective acceleration based on dash/break state
+            let effectiveAccel = playerPhysics.acceleration;
+            let effectiveMaxSpeed = playerPhysics.maxSpeed;
             
-            // Apply friction - HIGHER for more slide/inertia
-            playerPhysics.velocity.x *= playerPhysics.friction;
-            playerPhysics.velocity.z *= playerPhysics.friction;
+            if (playerPhysics.dashActive) {
+                // Dash: boost to max speed + 10%
+                effectiveMaxSpeed = playerPhysics.maxSpeed * playerPhysics.dashSpeedBoost;
+            }
+            
+            // Apply acceleration - with dash modifier
+            playerPhysics.velocity.x += inputX * effectiveAccel * 0.1;
+            playerPhysics.velocity.z += inputZ * effectiveAccel * 0.1;
+            
+            // Apply friction - normal or handbrake
+            if (playerPhysics.handbrakeActive) {
+                // Handbrake: low friction for drift (maintains speed, allows sliding)
+                playerPhysics.velocity.x *= playerPhysics.handbrakeFriction;
+                playerPhysics.velocity.z *= playerPhysics.handbrakeFriction;
+            } else {
+                // Normal friction
+                playerPhysics.velocity.x *= playerPhysics.friction;
+                playerPhysics.velocity.z *= playerPhysics.friction;
+            }
             
             // Clamp speed
             const speed = Math.sqrt(playerPhysics.velocity.x ** 2 + playerPhysics.velocity.z ** 2);
-            if (speed > playerPhysics.maxSpeed) {
-                playerPhysics.velocity.x *= playerPhysics.maxSpeed / speed;
-                playerPhysics.velocity.z *= playerPhysics.maxSpeed / speed;
+            if (speed > effectiveMaxSpeed) {
+                playerPhysics.velocity.x *= effectiveMaxSpeed / speed;
+                playerPhysics.velocity.z *= effectiveMaxSpeed / speed;
             }
             
             // Update position
