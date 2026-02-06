@@ -2871,6 +2871,7 @@
             gameState.level++;
             gameState.isLevelComplete = false;
             gameState.coinsEarned = 0;
+            gameState.lives = 3 + (gameState.activePowerUpEffects.extraLives || 0);
 
             applyPowerUpEffects();
 

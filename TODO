@@ -1,7 +1,8 @@
-- convert the project from tree.js to babylon.js and make it modularized, easy to maintain, POO and production-grade
+- Make the project modularized, easy to maintain, POO and production-grade
 - Make the stages not only squared, but with some variations
 - Add leaderboard per seed
 - Add music, SFX, and audio
+convert the project from tree.js to babylon.js
 
 PENDING
 ========
