@@ -1,6 +1,8 @@
+- Extend stage shape to have simple maze like stages.
 - Extend available powerups to boost shield and dash
 - Add stage powerups (temporary ones) that lasts for some times only
 - Add leaderboard per seed
+- Add settings menu to tweak key bindings and some game settings
 - Add music, SFX, and audio
 - convert the project from tree.js to babylon.js
 
@@ -8,16 +10,17 @@ BUG
 ========
 Zoom-out works only after zoom in has been triggered.
 Movable parts are not colliding anymore with sphere or opponents.
+Coins & dash/break indicators overlaps stage progress (lives, seed, starts, score, time)
 
 PENDING
+========
+
+DONE
 ========
 - Create a main menu with 3 game modes:
   - single player: (with fixed stages, difficulty progression)
   - random: you can choose difficulty among simple, medium, hard, hell. Difficulty level drives stage shape complexity and size, number of movable parts, number of enemies, number of collectibles
   - Custom: You can select any parameters for generation. Seed is random 
-
-DONE
-========
 - Make the stages not only squared, but with some variations
 - Make the project modularized, easy to maintain, POO and production-grade
 - Add eased zoom-in with R2 and eased zoom-out with L2. When released, camera gets back to default. Add equivalents for keyboard (right shift, left shift)

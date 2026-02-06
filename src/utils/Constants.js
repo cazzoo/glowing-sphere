@@ -18,13 +18,13 @@ export const ARENA = {
   },
   // Get arena shape based on level
   getShapeForLevel(level) {
+    // Shapes array excluding octagon (which is handled specially)
     const shapes = [
       this.SHAPES.RECTANGLE,
       this.SHAPES.OVAL,
       this.SHAPES.DIAMOND,
       this.SHAPES.HEXAGON,
       this.SHAPES.CIRCLE,
-      this.SHAPES.OCTAGON,
       this.SHAPES.CROSS,
       this.SHAPES.ROUNDED_RECT
     ];
@@ -115,4 +115,96 @@ export const REWARDS = {
   MIN_COINS: 5,
   TARGET_TIME_BASE: 60,
   TARGET_TIME_PER_LEVEL: 10
+};
+
+// Game Mode Types
+export const GAME_MODES = {
+  CAMPAIGN: 'campaign',
+  RANDOM_MATCH: 'random_match',
+  SANDBOX: 'sandbox'
+};
+
+// Difficulty Tiers for Random Match
+export const DIFFICULTY_TIERS = {
+  SIMPLE: {
+    name: 'Simple',
+    enemySpeedMultiplier: 0.6,
+    enemyCountMultiplier: 0.5,
+    obstacleCountMultiplier: 0.4,
+    movingObstacleProbability: 0.2,
+    starCountMultiplier: 1.0,
+    allowedShapes: [ARENA.SHAPES.RECTANGLE, ARENA.SHAPES.OVAL],
+    spawnSafetyZone: 6,
+    lives: 5
+  },
+  MEDIUM: {
+    name: 'Medium',
+    enemySpeedMultiplier: 0.85,
+    enemyCountMultiplier: 0.75,
+    obstacleCountMultiplier: 0.7,
+    movingObstacleProbability: 0.4,
+    starCountMultiplier: 1.0,
+    allowedShapes: [ARENA.SHAPES.RECTANGLE, ARENA.SHAPES.OVAL, ARENA.SHAPES.ROUNDED_RECT],
+    spawnSafetyZone: 5,
+    lives: 4
+  },
+  HARD: {
+    name: 'Hard',
+    enemySpeedMultiplier: 1.1,
+    enemyCountMultiplier: 1.2,
+    obstacleCountMultiplier: 1.3,
+    movingObstacleProbability: 0.6,
+    starCountMultiplier: 0.9,
+    allowedShapes: [ARENA.SHAPES.DIAMOND, ARENA.SHAPES.HEXAGON, ARENA.SHAPES.OCTAGON],
+    spawnSafetyZone: 4,
+    lives: 3
+  },
+  HELL: {
+    name: 'Hell',
+    enemySpeedMultiplier: 1.5,
+    enemyCountMultiplier: 1.8,
+    obstacleCountMultiplier: 2.0,
+    movingObstacleProbability: 0.9,
+    starCountMultiplier: 0.8,
+    allowedShapes: [ARENA.SHAPES.CROSS, ARENA.SHAPES.CIRCLE, ARENA.SHAPES.OCTAGON],
+    spawnSafetyZone: 3,
+    lives: 2
+  }
+};
+
+// Campaign progression configuration
+export const CAMPAIGN_CONFIG = {
+  // Progressive difficulty for campaign
+  getStageConfig(stage) {
+    const baseLevel = stage;
+    return {
+      level: baseLevel,
+      // Shape progresses through predefined sequence
+      shape: ARENA.getShapeForLevel(baseLevel),
+      // Enemy count scales with stage
+      enemyCount: 1 + Math.floor((baseLevel - 1) / 3),
+      // Obstacle count increases
+      obstacleMultiplier: 1 + (baseLevel * 0.1),
+      // Moving obstacles appear after stage 3
+      movingObstacleProbability: Math.min(0.9, 0.2 + (baseLevel * 0.08)),
+      // Safety zone decreases as difficulty increases
+      spawnSafetyZone: Math.max(3, 6 - Math.floor(baseLevel / 4)),
+      // Lives decrease in later stages
+      lives: Math.max(2, 5 - Math.floor(baseLevel / 8))
+    };
+  }
+};
+
+// Default configuration for sandbox mode
+export const SANDBOX_DEFAULTS = {
+  arenaShape: ARENA.SHAPES.RECTANGLE,
+  arenaWidth: 30,
+  arenaHeight: 20,
+  enemyCount: 1,
+  obstacleCount: 5,
+  movingObstacleCount: 2,
+  starCount: 5,
+  enemySpeedMultiplier: 1.0,
+  lives: 3,
+  spawnSafetyZone: 4
 };

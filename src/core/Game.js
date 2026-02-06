@@ -31,12 +31,14 @@ export class Game {
       totalStars: 0,
       isGameOver: false,
       isLevelComplete: false,
+      isPaused: false,
       seed: null,
       rng: null,
       levelStartTime: 0,
       levelCompletionTime: 0,
       coinsEarned: 0,
-      activePowerUpEffects: {}
+      activePowerUpEffects: {},
+      gameConfig: null // Store the current game configuration
     };
     
     // Entities
@@ -253,6 +255,89 @@ export class Game {
         return { geometry, width: ARENA.WIDTH, height: ARENA.HEIGHT };
       }
     }
+  }
+
+  /**
+   * Create floor geometry with custom dimensions
+   * @private
+   */
+  _createFloorGeometryWithConfig(shape, width, height) {
+    const segments = 40;
+    
+    // Temporarily override ARENA dimensions
+    const originalWidth = ARENA.WIDTH;
+    const originalHeight = ARENA.HEIGHT;
+    ARENA.WIDTH = width;
+    ARENA.HEIGHT = height;
+    
+    const result = this._createFloorGeometry(shape);
+    
+    // Restore original dimensions
+    ARENA.WIDTH = originalWidth;
+    ARENA.HEIGHT = originalHeight;
+    
+    return result;
+  }
+
+  /**
+   * Setup walls with custom configuration
+   * @private
+   */
+  _setupWallsWithConfig(level, shape, width, height) {
+    // Clear existing walls
+    this.walls.forEach(w => this.scene.remove(w));
+    this.walls = [];
+    
+    // Temporarily override ARENA dimensions
+    const originalWidth = ARENA.WIDTH;
+    const originalHeight = ARENA.HEIGHT;
+    ARENA.WIDTH = width;
+    ARENA.HEIGHT = height;
+    
+    // Call original setupWalls with the shape
+    switch (shape) {
+      case ARENA.SHAPES.CIRCLE:
+        const radius = Math.min(width, height) / 2 + 1;
+        this.walls = this._createCurvedWalls(level, radius, radius, 48);
+        break;
+        
+      case ARENA.SHAPES.OVAL:
+        const radiusX = width / 2 + 1;
+        const radiusZ = height / 2 + 1;
+        this.walls = this._createCurvedWalls(level, radiusX, radiusZ, 40);
+        break;
+        
+      case ARENA.SHAPES.DIAMOND:
+        const dRadius = (Math.min(width, height) / 2 + 1) * 1.2;
+        this.walls = this._createPolygonWalls(level, 4, dRadius);
+        break;
+        
+      case ARENA.SHAPES.HEXAGON:
+        const hexRadius = Math.min(width, height) / 2 + 1;
+        this.walls = this._createPolygonWalls(level, 6, hexRadius);
+        break;
+        
+      case ARENA.SHAPES.OCTAGON:
+        const octRadius = Math.min(width, height) / 2 + 1;
+        this.walls = this._createPolygonWalls(level, 8, octRadius);
+        break;
+        
+      case ARENA.SHAPES.CROSS:
+        this.walls = this._createCrossWalls(level);
+        break;
+        
+      case ARENA.SHAPES.ROUNDED_RECT:
+        this.walls = this._createRoundedRectWalls(level);
+        break;
+        
+      default:
+        this.walls = this._createRectangularWalls(level);
+        break;
+    }
+    
+    // Restore original dimensions
+    ARENA.WIDTH = originalWidth;
+    ARENA.HEIGHT = originalHeight;
   }
 
   /**
@@ -738,10 +823,14 @@ export class Game {
    * Generate level
    * @param {number} level - Level number
    * @param {string|null} seed - Level seed (null for random)
+   * @param {Object} config - Game configuration object
    */
-  generateLevel(level, seed = null) {
+  generateLevel(level, seed = null, config = null) {
     // Clear existing entities
     this._clearLevel();
+    
+    // Store configuration
+    this.state.gameConfig = config;
     
     // Update state
     this.state.level = level;
@@ -758,20 +847,36 @@ export class Game {
     
     this.state.rng = new SeededRandom(this.state.seed + '_' + level);
     
+    // Determine arena shape and dimensions from config
+    let arenaShape = config?.arenaShape || ARENA.getShapeForLevel(level);
+    let arenaWidth = config?.arenaWidth || ARENA.WIDTH;
+    let arenaHeight = config?.arenaHeight || ARENA.HEIGHT;
+    
     // Update floor - recreate with new shape
-    const shape = ARENA.getShapeForLevel(level);
     this.scene.remove(this.floor);
     this.floor.geometry.dispose();
-    const { geometry } = this._createFloorGeometry(shape);
+    const { geometry } = this._createFloorGeometryWithConfig(arenaShape, arenaWidth, arenaHeight);
     this.floor.geometry = geometry;
     this.floor.material.uniforms.level.value = level;
-    this.floor.material.uniforms.shapeType.value = this._getShapeTypeValue(shape);
+    this.floor.material.uniforms.shapeType.value = this._getShapeTypeValue(arenaShape);
     this.scene.add(this.floor);
     
-    this._setupWalls(level);
+    this._setupWallsWithConfig(level, arenaShape, arenaWidth, arenaHeight);
+    
+    // Set lives from config
+    if (config?.lives !== undefined) {
+      this.state.lives = config.lives;
+    }
     
     // Create player
     this.player = new Player(this.scene);
+    
+    // Set arena configuration for proper boundary checking
+    this.player.setArenaConfig({
+      shape: arenaShape,
+      width: arenaWidth,
+      height: arenaHeight
+    });
     
     // Apply power-up effects to player
     if (this.state.activePowerUpEffects.speed) {
@@ -779,13 +884,13 @@ export class Game {
     }
     
     // Generate stars
-    this._generateStars(level);
+    this._generateStarsWithConfig(level, config);
     
     // Generate obstacles
-    this._generateObstacles(level);
+    this._generateObstaclesWithConfig(level, config);
     
     // Generate enemies
-    this._generateEnemies(level);
+    this._generateEnemiesWithConfig(level, config);
     
     // Generate moving walls (level 5+)
     if (level >= 5) {
@@ -985,6 +1090,157 @@ export class Game {
   }
 
   /**
+   * Generate stars with configuration
+   * @private
+   */
+  _generateStarsWithConfig(level, config) {
+    const starCount = config?.starCount || (5 + Math.floor(level * 1.5));
+    this.state.totalStars = starCount;
+    
+    const spawnSafetyZone = config?.spawnSafetyZone || 4;
+    
+    const starPositions = [];
+    
+    for (let i = 0; i < starCount; i++) {
+      let x, z, valid;
+      let attempts = 0;
+      
+      do {
+        valid = true;
+        x = this.state.rng.nextFloat(-ARENA.WIDTH/2 + 2, ARENA.WIDTH/2 - 2);
+        z = this.state.rng.nextFloat(-ARENA.HEIGHT/2 + 2, ARENA.HEIGHT/2 - 2);
+        
+        // Check distance from player spawn
+        if (Math.sqrt(x * x + z * z) < spawnSafetyZone) valid = false;
+        
+        // Check distance from other stars
+        for (const pos of starPositions) {
+          const dx = pos.x - x;
+          const dz = pos.z - z;
+          if (Math.sqrt(dx * dx + dz * dz) < 2.5) valid = false;
+        }
+        
+        attempts++;
+      } while (!valid && attempts < 100);
+      
+      if (valid) {
+        starPositions.push({ x, z });
+        this.stars.push(new Star(this.scene, x, z));
+      }
+    }
+  }
+
+  /**
+   * Generate obstacles with configuration
+   * @private
+   */
+  _generateObstaclesWithConfig(level, config) {
+    let obstacleCount;
+    let movingObstacleCount;
+    
+    if (config?.obstacleCount !== undefined) {
+      obstacleCount = config.obstacleCount;
+      movingObstacleCount = config.movingObstacleCount || 0;
+    } else if (config?.obstacleCountMultiplier) {
+      obstacleCount = Math.floor((2 + Math.floor(level * 1.8)) * config.obstacleCountMultiplier);
+      movingObstacleCount = Math.floor(obstacleCount * config.movingObstacleProbability);
+    } else {
+      obstacleCount = 2 + Math.floor(level * 1.8);
+      movingObstacleCount = Math.floor(obstacleCount * 0.5);
+    }
+    
+    const spawnSafetyZone = config?.spawnSafetyZone || 4;
+    const obstaclePositions = [];
+    
+    for (let i = 0; i < obstacleCount; i++) {
+      let x, z, valid;
+      let attempts = 0;
+      
+      const isMoving = i < movingObstacleCount;
+      
+      do {
+        valid = true;
+        x = this.state.rng.nextFloat(-ARENA.WIDTH/2 + 3, ARENA.WIDTH/2 - 3);
+        z = this.state.rng.nextFloat(-ARENA.HEIGHT/2 + 3, ARENA.HEIGHT/2 - 3);
+        
+        if (Math.sqrt(x * x + z * z) < spawnSafetyZone + 2) valid = false;
+        
+        for (const pos of this.stars) {
+          const dx = pos.position.x - x;
+          const dz = pos.position.z - z;
+          if (Math.sqrt(dx * dx + dz * dz) < 3) valid = false;
+        }
+        
+        for (const pos of obstaclePositions) {
+          const dx = pos.x - x;
+          const dz = pos.z - z;
+          if (Math.sqrt(dx * dx + dz * dz) < 2.5) valid = false;
+        }
+        
+        attempts++;
+      } while (!valid && attempts < 100);
+      
+      if (valid) {
+        obstaclePositions.push({ x, z });
+        const width = this.state.rng.nextFloat(1, 3.5);
+        const depth = this.state.rng.nextFloat(1, 3.5);
+        const moveSpeed = this.state.rng.nextFloat(1.2, 2.5 + level * 0.2);
+        const moveRange = this.state.rng.nextFloat(2.5, 5 + level * 0.4);
+        const moveAxis = this.state.rng.next() < 0.5 ? 'x' : 'z';
+        
+        this.obstacles.push(new Obstacle(
+          this.scene, x, z, width, depth, 
+          isMoving, moveSpeed, moveRange, moveAxis, level
+        ));
+      }
+    }
+  }
+
+  /**
+   * Generate enemies with configuration
+   * @private
+   */
+  _generateEnemiesWithConfig(level, config) {
+    let enemyCount;
+    
+    if (config?.enemyCount !== undefined) {
+      enemyCount = config.enemyCount;
+    } else if (config?.enemyCountMultiplier) {
+      const baseCount = 1 + (level >= 10 ? 3 : (level >= 7 ? 2 : (level >= 4 ? 1 : 0)));
+      enemyCount = Math.ceil(baseCount * config.enemyCountMultiplier);
+    } else {
+      enemyCount = 1 + (level >= 10 ? 3 : (level >= 7 ? 2 : (level >= 4 ? 1 : 0)));
+    }
+    
+    const spawnSafetyZone = config?.spawnSafetyZone || 4;
+    const enemySpeedMultiplier = config?.enemySpeedMultiplier || 1.0;
+    
+    for (let i = 0; i < enemyCount; i++) {
+      const angle = this.state.rng.nextFloat(0, Math.PI * 2);
+      const distance = this.state.rng.nextFloat(spawnSafetyZone + 4, 13);
+      let enemyX = Math.cos(angle) * distance;
+      let enemyZ = Math.sin(angle) * distance;
+      
+      enemyX = Math.max(-ARENA.WIDTH/2 + 2, Math.min(ARENA.WIDTH/2 - 2, enemyX));
+      enemyZ = Math.max(-ARENA.HEIGHT/2 + 2, Math.min(ARENA.HEIGHT/2 - 2, enemyZ));
+      
+      const enemy = new Enemy(this.scene, enemyX, enemyZ, level, i === 0, i);
+      
+      // Apply speed multiplier from config
+      if (enemySpeedMultiplier !== 1.0) {
+        enemy.setSpeedMultiplier(enemySpeedMultiplier);
+      }
+      
+      // Apply power-up effects to enemy
+      if (this.state.activePowerUpEffects.enemySpeed) {
+        enemy.setSpeedMultiplier(this.state.activePowerUpEffects.enemySpeed);
+      }
+      
+      this.enemies.push(enemy);
+    }
+  }
+
+  /**
    * Calculate coins reward
    * @param {number} level - Level number
    * @param {number} timeTaken - Time taken in seconds
@@ -1028,6 +1284,28 @@ export class Game {
   }
 
   /**
+   * Pause game
+   */
+  pause() {
+    this.state.isPaused = true;
+  }
+
+  /**
+   * Resume game
+   */
+  resume() {
+    this.state.isPaused = false;
+  }
+
+  /**
+   * Check if game is paused
+   * @returns {boolean} True if paused
+   */
+  isPaused() {
+    return this.state.isPaused;
+  }
+
+  /**
    * Main animation loop
    * @private
    */
@@ -1039,8 +1317,8 @@ export class Game {
     const deltaTime = 0.016;
     const time = performance.now() / 1000;
     
-    // Skip if game over or level complete
-    if (this.state.isGameOver || this.state.isLevelComplete) {
+    // Skip if game over, level complete, or paused
+    if (this.state.isGameOver || this.state.isLevelComplete || this.state.isPaused) {
       this.renderer.render(this.scene, this.camera);
       return;
     }
@@ -1290,20 +1568,22 @@ export class Game {
   /**
    * Restart game with new seed
    * @param {string|null} seed - New seed or null for random
+   * @param {Object} config - Game configuration
    */
-  restartGame(seed = null) {
+  restartGame(seed = null, config = null) {
     this.powerUpSystem.applyPowerUpEffects();
     this.state.activePowerUpEffects = this.powerUpSystem.getActiveEffects();
     
     this.state.score = 0;
-    this.state.lives = this.powerUpSystem.getStartingLives();
-    this.state.level = 1;
     this.state.isGameOver = false;
     this.state.isLevelComplete = false;
     this.state.seed = seed;
     this.state.coinsEarned = 0;
     
-    this.generateLevel(1, seed);
+    // Use provided config or stored config
+    const gameConfig = config || this.state.gameConfig;
+    
+    this.generateLevel(1, seed, gameConfig);
   }
 
   /**
@@ -1313,12 +1593,11 @@ export class Game {
     this.state.level++;
     this.state.isLevelComplete = false;
     this.state.coinsEarned = 0;
-    this.state.lives = this.powerUpSystem.getStartingLives();
     
     this.powerUpSystem.applyPowerUpEffects();
     this.state.activePowerUpEffects = this.powerUpSystem.getActiveEffects();
     
-    this.generateLevel(this.state.level, this.state.seed);
+    this.generateLevel(this.state.level, this.state.seed, this.state.gameConfig);
   }
 
   /**
@@ -1329,7 +1608,6 @@ export class Game {
     const currentSeed = this.state.seed;
     
     this.state.score = 0;
-    this.state.lives = this.powerUpSystem.getStartingLives();
     this.state.isGameOver = false;
     this.state.isLevelComplete = false;
     this.state.coinsEarned = 0;
@@ -1337,7 +1615,7 @@ export class Game {
     this.powerUpSystem.applyPowerUpEffects();
     this.state.activePowerUpEffects = this.powerUpSystem.getActiveEffects();
     
-    this.generateLevel(currentLevel, currentSeed);
+    this.generateLevel(currentLevel, currentSeed, this.state.gameConfig);
   }
 
   /**

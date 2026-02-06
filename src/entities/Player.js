@@ -22,6 +22,14 @@ export class Player {
     this.velocity = new THREE.Vector3(0, 0, 0);
     this.radius = PLAYER.RADIUS;
     
+    // Arena boundaries configuration
+    this.arenaConfig = {
+      shape: ARENA.SHAPES.RECTANGLE,
+      width: ARENA.WIDTH,
+      height: ARENA.HEIGHT,
+      walls: [] // Will be populated with wall collision data
+    };
+    
     // Movement settings
     this.acceleration = PLAYER.ACCELERATION;
     this.friction = PLAYER.FRICTION;
@@ -406,24 +414,322 @@ export class Player {
    * @private
    */
   _updateBoundaries() {
-    const halfWidth = (ARENA?.WIDTH || 30) / 2 - this.radius;
-    const halfHeight = (ARENA?.HEIGHT || 20) / 2 - this.radius;
+    const shape = this.arenaConfig.shape;
+    const width = this.arenaConfig.width;
+    const height = this.arenaConfig.height;
+    const bounceFactor = 0.3;
+
+    switch (shape) {
+      case ARENA.SHAPES.CIRCLE:
+      case ARENA.SHAPES.OVAL:
+        this._checkCircularBoundary(width, height, bounceFactor);
+        break;
+      
+      case ARENA.SHAPES.DIAMOND:
+        this._checkDiamondBoundary(width, height, bounceFactor);
+        break;
+      
+      case ARENA.SHAPES.HEXAGON:
+        this._checkPolygonBoundary(6, Math.min(width, height) / 2, bounceFactor);
+        break;
+      
+      case ARENA.SHAPES.OCTAGON:
+        this._checkPolygonBoundary(8, Math.min(width, height) / 2, bounceFactor);
+        break;
+      
+      case ARENA.SHAPES.CROSS:
+        this._checkCrossBoundary(width, height, bounceFactor);
+        break;
+      
+      case ARENA.SHAPES.ROUNDED_RECT:
+        this._checkRoundedRectBoundary(width, height, 5, bounceFactor);
+        break;
+      
+      default:
+        // Rectangle
+        this._checkRectangularBoundary(width, height, bounceFactor);
+        break;
+    }
+  }
+
+  /**
+   * Check rectangular boundary
+   * @private
+   */
+  _checkRectangularBoundary(width, height, bounceFactor) {
+    const halfWidth = width / 2 - this.radius;
+    const halfHeight = height / 2 - this.radius;
 
     if (this.position.x < -halfWidth) {
       this.position.x = -halfWidth;
-      this.velocity.x *= -0.3;
+      this.velocity.x *= -bounceFactor;
     }
     if (this.position.x > halfWidth) {
       this.position.x = halfWidth;
-      this.velocity.x *= -0.3;
+      this.velocity.x *= -bounceFactor;
     }
     if (this.position.z < -halfHeight) {
       this.position.z = -halfHeight;
-      this.velocity.z *= -0.3;
+      this.velocity.z *= -bounceFactor;
     }
     if (this.position.z > halfHeight) {
       this.position.z = halfHeight;
-      this.velocity.z *= -0.3;
+      this.velocity.z *= -bounceFactor;
+    }
+  }
+
+  /**
+   * Check circular/oval boundary
+   * @private
+   */
+  _checkCircularBoundary(width, height, bounceFactor) {
+    const radiusX = width / 2 - this.radius;
+    const radiusZ = height / 2 - this.radius;
+    
+    // Check if outside ellipse
+    const normalizedX = this.position.x / radiusX;
+    const normalizedZ = this.position.z / radiusZ;
+    const distanceSquared = normalizedX * normalizedX + normalizedZ * normalizedZ;
+    
+    if (distanceSquared > 1) {
+      // Calculate the point on the ellipse closest to the player
+      const angle = Math.atan2(this.position.z / radiusZ, this.position.x / radiusX);
+      const closestX = Math.cos(angle) * radiusX;
+      const closestZ = Math.sin(angle) * radiusZ;
+      
+      // Move player to boundary
+      this.position.x = closestX;
+      this.position.z = closestZ;
+      
+      // Calculate normal at collision point (pointing inward)
+      const normal = new THREE.Vector3(
+        -this.position.x / (radiusX * radiusX),
+        0,
+        -this.position.z / (radiusZ * radiusZ)
+      ).normalize();
+      
+      // Reflect velocity
+      const dot = this.velocity.x * normal.x + this.velocity.z * normal.z;
+      this.velocity.x -= 2 * dot * normal.x;
+      this.velocity.z -= 2 * dot * normal.z;
+      
+      // Apply bounce damping
+      this.velocity.x *= (1 - bounceFactor);
+      this.velocity.z *= (1 - bounceFactor);
+    }
+  }
+
+  /**
+   * Check diamond boundary
+   * @private
+   */
+  _checkDiamondBoundary(width, height, bounceFactor) {
+    const halfWidth = width / 2;
+    const halfHeight = height / 2;
+    
+    // Diamond boundary: |x|/hw + |z|/hh <= 1
+    const normalizedDist = Math.abs(this.position.x) / halfWidth + Math.abs(this.position.z) / halfHeight;
+    
+    if (normalizedDist > 1 - this.radius / Math.min(halfWidth, halfHeight)) {
+      // Find closest point on diamond
+      const t = Math.min(1, (Math.abs(this.position.x) / halfWidth + Math.abs(this.position.z) / halfHeight));
+      const clampedX = Math.sign(this.position.x) * Math.abs(this.position.x) / t;
+      const clampedZ = Math.sign(this.position.z) * Math.abs(this.position.z) / t;
+      
+      // Calculate normal at collision point
+      const normal = new THREE.Vector3(
+        Math.sign(this.position.x) / halfWidth,
+        0,
+        Math.sign(this.position.z) / halfHeight
+      ).normalize();
+      
+      // Move player to boundary (with radius offset)
+      this.position.x = clampedX - normal.x * this.radius;
+      this.position.z = clampedZ - normal.z * this.radius;
+      
+      // Reflect velocity
+      const dot = this.velocity.x * normal.x + this.velocity.z * normal.z;
+      if (dot < 0) {
+        this.velocity.x -= 2 * dot * normal.x;
+        this.velocity.z -= 2 * dot * normal.z;
+        this.velocity.x *= (1 - bounceFactor);
+        this.velocity.z *= (1 - bounceFactor);
+      }
+    }
+  }
+
+  /**
+   * Check polygon boundary (hexagon, octagon)
+   * @private
+   */
+  _checkPolygonBoundary(sides, radius, bounceFactor) {
+    const effectiveRadius = radius - this.radius;
+    const angleOffset = sides === 4 ? Math.PI / 4 : Math.PI / sides;
+    
+    // Check distance to each edge
+    for (let i = 0; i < sides; i++) {
+      const angle1 = (i * Math.PI * 2) / sides - angleOffset;
+      const angle2 = ((i + 1) * Math.PI * 2) / sides - angleOffset;
+      
+      const x1 = Math.cos(angle1) * radius;
+      const z1 = Math.sin(angle1) * radius;
+      const x2 = Math.cos(angle2) * radius;
+      const z2 = Math.sin(angle2) * radius;
+      
+      // Edge vector and normal
+      const edgeX = x2 - x1;
+      const edgeZ = z2 - z1;
+      const normalX = -edgeZ;
+      const normalZ = edgeX;
+      const normalLen = Math.sqrt(normalX * normalX + normalZ * normalZ);
+      
+      // Distance from point to line (edge of polygon)
+      const distance = (this.position.x - x1) * normalX / normalLen + (this.position.z - z1) * normalZ / normalLen;
+      
+      // Check if player is outside this edge
+      if (distance > -this.radius) {
+        // Push player back
+        const pushDistance = distance + this.radius;
+        this.position.x -= (normalX / normalLen) * pushDistance;
+        this.position.z -= (normalZ / normalLen) * pushDistance;
+        
+        // Reflect velocity
+        const normX = normalX / normalLen;
+        const normZ = normalZ / normalLen;
+        const dot = this.velocity.x * normX + this.velocity.z * normZ;
+        
+        if (dot > 0) {
+          this.velocity.x -= 2 * dot * normX;
+          this.velocity.z -= 2 * dot * normZ;
+          this.velocity.x *= (1 - bounceFactor);
+          this.velocity.z *= (1 - bounceFactor);
+        }
+        
+        return; // Only handle one collision per frame
+      }
+    }
+  }
+
+  /**
+   * Check cross-shaped boundary
+   * @private
+   */
+  _checkCrossBoundary(width, height, bounceFactor) {
+    const armWidth = 6;
+    const armLength = Math.min(width, height) / 2;
+    
+    // Determine if we're in one of the arms or a corner
+    const inHorizontalArm = Math.abs(this.position.z) < armWidth / 2;
+    const inVerticalArm = Math.abs(this.position.x) < armWidth / 2;
+    
+    const effectiveBoundary = {
+      minX: inHorizontalArm ? -armLength : -armLength,
+      maxX: inHorizontalArm ? armLength : armLength,
+      minZ: inVerticalArm ? -armLength : -armLength,
+      maxZ: inVerticalArm ? armLength : armLength
+    };
+    
+    // Add inner corners for cross shape
+    if (!inHorizontalArm && !inVerticalArm) {
+      // In corner area - constrain to cross shape
+      if (Math.abs(this.position.x) > armWidth / 2 && Math.abs(this.position.z) > armWidth / 2) {
+        // Outside the cross - push to nearest arm
+        const distToHorizontal = Math.abs(this.position.z) - armWidth / 2;
+        const distToVertical = Math.abs(this.position.x) - armWidth / 2;
+        
+        if (distToHorizontal < distToVertical) {
+          // Push towards horizontal arm
+          this.position.z = Math.sign(this.position.z) * (armWidth / 2 - this.radius);
+          this.velocity.z *= -bounceFactor;
+        } else {
+          // Push towards vertical arm
+          this.position.x = Math.sign(this.position.x) * (armWidth / 2 - this.radius);
+          this.velocity.x *= -bounceFactor;
+        }
+        return;
+      }
+    }
+    
+    // Standard boundary checking for arms
+    const halfWidth = inVerticalArm ? armWidth / 2 : armLength;
+    const halfHeight = inHorizontalArm ? armWidth / 2 : armLength;
+    
+    if (this.position.x < -halfWidth + this.radius) {
+      this.position.x = -halfWidth + this.radius;
+      this.velocity.x *= -bounceFactor;
+    }
+    if (this.position.x > halfWidth - this.radius) {
+      this.position.x = halfWidth - this.radius;
+      this.velocity.x *= -bounceFactor;
+    }
+    if (this.position.z < -halfHeight + this.radius) {
+      this.position.z = -halfHeight + this.radius;
+      this.velocity.z *= -bounceFactor;
+    }
+    if (this.position.z > halfHeight - this.radius) {
+      this.position.z = halfHeight - this.radius;
+      this.velocity.z *= -bounceFactor;
+    }
+  }
+
+  /**
+   * Check rounded rectangle boundary
+   * @private
+   */
+  _checkRoundedRectBoundary(width, height, cornerRadius, bounceFactor) {
+    const halfWidth = width / 2;
+    const halfHeight = height / 2;
+    const innerWidth = halfWidth - cornerRadius;
+    const innerHeight = halfHeight - cornerRadius;
+    
+    // Determine which region the player is in
+    const inCornerX = Math.abs(this.position.x) > innerWidth;
+    const inCornerZ = Math.abs(this.position.z) > innerHeight;
+    
+    if (inCornerX && inCornerZ) {
+      // In corner region - treat as circular
+      const centerX = Math.sign(this.position.x) * innerWidth;
+      const centerZ = Math.sign(this.position.z) * innerHeight;
+      
+      const dx = this.position.x - centerX;
+      const dz = this.position.z - centerZ;
+      const dist = Math.sqrt(dx * dx + dz * dz);
+      
+      if (dist > cornerRadius - this.radius) {
+        const normal = new THREE.Vector3(-dx, 0, -dz).normalize();
+        
+        this.position.x = centerX - normal.x * (cornerRadius - this.radius);
+        this.position.z = centerZ - normal.z * (cornerRadius - this.radius);
+        
+        const dot = this.velocity.x * normal.x + this.velocity.z * normal.z;
+        if (dot < 0) {
+          this.velocity.x -= 2 * dot * normal.x;
+          this.velocity.z -= 2 * dot * normal.z;
+          this.velocity.x *= (1 - bounceFactor);
+          this.velocity.z *= (1 - bounceFactor);
+        }
+      }
+    } else {
+      // In straight edge region
+      const effectiveHalfWidth = halfWidth - this.radius;
+      const effectiveHalfHeight = halfHeight - this.radius;
+      
+      if (this.position.x < -effectiveHalfWidth) {
+        this.position.x = -effectiveHalfWidth;
+        this.velocity.x *= -bounceFactor;
+      }
+      if (this.position.x > effectiveHalfWidth) {
+        this.position.x = effectiveHalfWidth;
+        this.velocity.x *= -bounceFactor;
+      }
+      if (this.position.z < -effectiveHalfHeight) {
+        this.position.z = -effectiveHalfHeight;
+        this.velocity.z *= -bounceFactor;
+      }
+      if (this.position.z > effectiveHalfHeight) {
+        this.position.z = effectiveHalfHeight;
+        this.velocity.z *= -bounceFactor;
+      }
     }
   }
 
@@ -441,6 +747,19 @@ export class Player {
     this.handbrakeCooldownRemaining = 0;
     this.cameraZoom.currentHeight = this.cameraZoom.defaultHeight;
     this.cameraZoom.targetHeight = this.cameraZoom.defaultHeight;
+  }
+
+  /**
+   * Set arena configuration for boundary checking
+   * @param {Object} config - Arena configuration
+   */
+  setArenaConfig(config) {
+    this.arenaConfig = {
+      shape: config.shape || ARENA.SHAPES.RECTANGLE,
+      width: config.width || ARENA.WIDTH,
+      height: config.height || ARENA.HEIGHT,
+      walls: config.walls || []
+    };
   }
 
   /**
