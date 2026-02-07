@@ -15,7 +15,16 @@ export class UIManager {
     };
     
     this.currentDevice = 'keyboard';
+    
+    // Gamepad navigation state
+    this.gamepadIndex = null;
+    this.selectedButtonIndex = 0;
+    this.gamepadPollingInterval = null;
+    this.lastGamepadInput = { x: 0, y: 0, aPressed: false, bPressed: false };
+    this.gamepadInputCooldown = 0;
+    
     this._setupEventListeners();
+    this._setupGamepadListeners();
     this._updateDeviceHints();
   }
 
@@ -140,6 +149,182 @@ export class UIManager {
         }
       }
     });
+  }
+
+  /**
+   * Setup gamepad event listeners
+   * @private
+   */
+  _setupGamepadListeners() {
+    window.addEventListener('gamepadconnected', (e) => {
+      console.log('Gamepad connected:', e.gamepad.id);
+      this.gamepadIndex = e.gamepad.index;
+      this._startGamepadPolling();
+    });
+    
+    window.addEventListener('gamepaddisconnected', (e) => {
+      console.log('Gamepad disconnected');
+      if (this.gamepadIndex === e.gamepad.index) {
+        this.gamepadIndex = null;
+        this._stopGamepadPolling();
+        
+        // Try to find another connected gamepad
+        const gamepads = navigator.getGamepads();
+        for (let i = 0; i < gamepads.length; i++) {
+          if (gamepads[i]) {
+            this.gamepadIndex = i;
+            this._startGamepadPolling();
+            break;
+          }
+        }
+      }
+    });
+    
+    // Check for already connected gamepads
+    const gamepads = navigator.getGamepads();
+    for (let i = 0; i < gamepads.length; i++) {
+      if (gamepads[i]) {
+        this.gamepadIndex = i;
+        this._startGamepadPolling();
+        break;
+      }
+    }
+  }
+
+  /**
+   * Start polling for gamepad input
+   * @private
+   */
+  _startGamepadPolling() {
+    if (this.gamepadPollingInterval) return;
+    
+    this.gamepadPollingInterval = setInterval(() => {
+      this._handleGamepadInput();
+    }, 100); // Poll 10 times per second
+  }
+
+  /**
+   * Stop polling for gamepad input
+   * @private
+   */
+  _stopGamepadPolling() {
+    if (this.gamepadPollingInterval) {
+      clearInterval(this.gamepadPollingInterval);
+      this.gamepadPollingInterval = null;
+    }
+  }
+
+  /**
+   * Handle gamepad input for modal navigation
+   * @private
+   */
+  _handleGamepadInput() {
+    if (this.gamepadIndex === null) return;
+    
+    // Only handle gamepad input when a menu is open
+    const shopOpen = this.isShopOpen();
+    const gameOverOpen = this.isGameOverOpen();
+    const levelCompleteOpen = this.isLevelCompleteOpen();
+    const menuOpen = shopOpen || gameOverOpen || levelCompleteOpen;
+    
+    if (!menuOpen) return;
+    
+    const gamepads = navigator.getGamepads();
+    const gamepad = gamepads[this.gamepadIndex];
+    if (!gamepad) return;
+    
+    const deadzone = 0.5;
+    let x = 0, y = 0;
+    
+    // Check left stick
+    if (Math.abs(gamepad.axes[0]) > deadzone) x = gamepad.axes[0];
+    if (Math.abs(gamepad.axes[1]) > deadzone) y = gamepad.axes[1];
+    
+    // Check D-pad (buttons 12-15 on most controllers)
+    const buttonPressed = (index) => gamepad.buttons[index] && gamepad.buttons[index].pressed;
+    
+    if (x === 0 && y === 0) {
+      if (buttonPressed(12)) y = -1; // D-pad Up
+      if (buttonPressed(13)) y = 1;  // D-pad Down
+      if (buttonPressed(14)) x = -1; // D-pad Left
+      if (buttonPressed(15)) x = 1;  // D-pad Right
+    }
+    
+    const aPressed = buttonPressed(0) || buttonPressed(1); // A/B or X/Circle
+    const bPressed = buttonPressed(1) || buttonPressed(2); // B or Circle
+    
+    // Handle navigation with cooldown
+    if (this.gamepadInputCooldown > 0) {
+      this.gamepadInputCooldown--;
+    } else {
+      // Vertical navigation
+      if (y < -0.5) {
+        this._handleGamepadNavigation(-1);
+        this.gamepadInputCooldown = 10;
+      } else if (y > 0.5) {
+        this._handleGamepadNavigation(1);
+        this.gamepadInputCooldown = 10;
+      }
+      
+      // Horizontal navigation
+      if (x < -0.5 || x > 0.5) {
+        // For now, treat horizontal as vertical navigation
+        // This can be enhanced if needed for grid layouts
+        const direction = x > 0.5 ? 1 : -1;
+        this._handleGamepadNavigation(direction);
+        this.gamepadInputCooldown = 10;
+      }
+    }
+    
+    // Handle button press (A button to activate)
+    if (aPressed && !this.lastGamepadInput.aPressed) {
+      const focused = document.activeElement;
+      if (focused && focused.classList.contains('focusable')) {
+        focused.click();
+      } else {
+        // If nothing focused, focus the first element
+        const focusable = this._getFocusableElements();
+        if (focusable.length > 0) {
+          focusable[0].focus();
+        }
+      }
+    }
+    
+    // Handle B button (back/close)
+    if (bPressed && !this.lastGamepadInput.bPressed) {
+      if (shopOpen) {
+        this.hideShop();
+      }
+    }
+    
+    // Handle Start button (open shop)
+    const startPressed = buttonPressed(9) || buttonPressed(8);
+    if (startPressed && !this.lastGamepadInput.startPressed) {
+      if (!this.game.getState().isGameOver && !shopOpen) {
+        this.showShop();
+      }
+    }
+    
+    // Store last state
+    this.lastGamepadInput = { x, y, aPressed, bPressed, startPressed: startPressed };
+  }
+
+  /**
+   * Handle gamepad navigation
+   * @private
+   */
+  _handleGamepadNavigation(direction) {
+    const focusable = this._getFocusableElements();
+    if (focusable.length === 0) return;
+    
+    const currentIndex = focusable.indexOf(document.activeElement);
+    
+    if (currentIndex === -1) {
+      focusable[0]?.focus();
+    } else {
+      const nextIndex = (currentIndex + direction + focusable.length) % focusable.length;
+      focusable[nextIndex]?.focus();
+    }
   }
 
   /**
@@ -425,6 +610,12 @@ export class UIManager {
     document.getElementById('level-complete-nav-hint').style.display = 'none';
     document.getElementById('shop-menu').style.display = 'none';
     document.getElementById('shop-nav-hint').style.display = 'none';
+    
+    // Set initial focus for gamepad navigation
+    const focusable = this._getFocusableElements();
+    if (focusable.length > 0) {
+      focusable[0].focus();
+    }
   }
 
   /**
@@ -449,6 +640,12 @@ export class UIManager {
     document.getElementById('game-over-nav-hint').style.display = 'none';
     document.getElementById('shop-menu').style.display = 'none';
     document.getElementById('shop-nav-hint').style.display = 'none';
+    
+    // Set initial focus for gamepad navigation
+    const focusable = this._getFocusableElements();
+    if (focusable.length > 0) {
+      focusable[0].focus();
+    }
   }
 
   /**
@@ -473,6 +670,12 @@ export class UIManager {
     document.getElementById('level-complete-nav-hint').style.display = 'none';
     document.getElementById('game-over').style.display = 'none';
     document.getElementById('game-over-nav-hint').style.display = 'none';
+    
+    // Set initial focus for gamepad navigation
+    const focusable = this._getFocusableElements();
+    if (focusable.length > 0) {
+      focusable[0].focus();
+    }
   }
 
   /**
@@ -678,6 +881,9 @@ export class UIManager {
    * Cleanup
    */
   dispose() {
+    // Stop gamepad polling
+    this._stopGamepadPolling();
+    
     // Remove event listeners
     window.removeEventListener('inputDeviceChanged', this._updateDeviceHints);
     window.removeEventListener('controllerStatusChanged', this._handleControllerStatusChange);

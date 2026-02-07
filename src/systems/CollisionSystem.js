@@ -3,6 +3,7 @@
  * Handles collision detection and response for all entities
  */
 
+import * as THREE from 'three';
 import { COLLISION } from '../utils/Constants.js';
 
 export class CollisionSystem {
@@ -178,6 +179,99 @@ export class CollisionSystem {
    */
   isShieldActive() {
     return this.shieldActive;
+  }
+
+  /**
+   * Handle enemy-obstacle collision
+   * @param {Object} enemy - Enemy entity
+   * @param {Object} obstacle - Obstacle entity
+   * @returns {boolean} True if collision occurred
+   */
+  handleEnemyObstacleCollision(enemy, obstacle) {
+    // Check if enemy is colliding with obstacle
+    const enemyRadius = enemy.radius || 1.0;
+    const obstacleWidth = obstacle.width || 2;
+    const obstacleDepth = obstacle.depth || 2;
+    
+    const halfW = obstacleWidth / 2 + enemyRadius;
+    const halfD = obstacleDepth / 2 + enemyRadius;
+    
+    const collision = Math.abs(enemy.position.x - obstacle.position.x) < halfW &&
+                     Math.abs(enemy.position.z - obstacle.position.z) < halfD;
+    
+    if (collision) {
+      // Push enemy away from obstacle
+      const dx = enemy.position.x - obstacle.position.x;
+      const dz = enemy.position.z - obstacle.position.z;
+      
+      // Determine which side of the obstacle the enemy is on
+      const overlapX = halfW - Math.abs(dx);
+      const overlapZ = halfD - Math.abs(dz);
+      
+      let pushDir = new THREE.Vector3();
+      
+      if (overlapX < overlapZ) {
+        // Push on X axis
+        pushDir.set(dx > 0 ? 1 : -1, 0, 0);
+        enemy.position.x = obstacle.position.x + (dx > 0 ? halfW : -halfW);
+      } else {
+        // Push on Z axis
+        pushDir.set(0, 0, dz > 0 ? 1 : -1);
+        enemy.position.z = obstacle.position.z + (dz > 0 ? halfD : -halfD);
+      }
+      
+      // Also reduce enemy velocity when colliding
+      enemy.velocity.multiplyScalar(0.3);
+      
+      // Update enemy mesh position
+      if (enemy.mesh) {
+        enemy.mesh.position.copy(enemy.position);
+      }
+      
+      return true;
+    }
+    
+    return false;
+  }
+
+  /**
+   * Handle enemy-enemy collision
+   * @param {Object} enemy1 - First enemy entity
+   * @param {Object} enemy2 - Second enemy entity
+   * @returns {boolean} True if collision occurred
+   */
+  handleEnemyEnemyCollision(enemy1, enemy2) {
+    const radius1 = enemy1.radius || 1.0;
+    const radius2 = enemy2.radius || 1.0;
+    
+    const dx = enemy1.position.x - enemy2.position.x;
+    const dz = enemy1.position.z - enemy2.position.z;
+    const dist = Math.sqrt(dx * dx + dz * dz);
+    const minDist = radius1 + radius2;
+    
+    if (dist < minDist && dist > 0) {
+      // Push enemies apart
+      const overlap = minDist - dist;
+      const pushX = (dx / dist) * overlap * 0.5;
+      const pushZ = (dz / dist) * overlap * 0.5;
+      
+      enemy1.position.x += pushX;
+      enemy1.position.z += pushZ;
+      enemy2.position.x -= pushX;
+      enemy2.position.z -= pushZ;
+      
+      // Update mesh positions
+      if (enemy1.mesh) {
+        enemy1.mesh.position.copy(enemy1.position);
+      }
+      if (enemy2.mesh) {
+        enemy2.mesh.position.copy(enemy2.position);
+      }
+      
+      return true;
+    }
+    
+    return false;
   }
 
   /**

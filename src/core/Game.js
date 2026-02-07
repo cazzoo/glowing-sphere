@@ -922,6 +922,14 @@ export class Game {
     
     this.movingWalls.forEach(w => w.dispose());
     this.movingWalls = [];
+    
+    // Clear and dispose walls
+    this.walls.forEach(w => {
+      this.scene.remove(w);
+      w.geometry.dispose();
+      w.material.dispose();
+    });
+    this.walls = [];
   }
 
   /**
@@ -1437,11 +1445,31 @@ export class Game {
         
         enemy.updateShaders(time);
         
+        // Check collision between enemy and obstacles (movable parts)
+        this.obstacles.forEach(obstacle => {
+          this.collisionSystem.handleEnemyObstacleCollision(enemy, obstacle);
+        });
+        
+        // Check collision between enemy and moving walls
+        this.movingWalls.forEach(wall => {
+          this.collisionSystem.handleEnemyObstacleCollision(enemy, wall);
+        });
+        
         this.collisionSystem.handlePlayerEnemyCollision(
           this.player, enemy, handleDamage
         );
       }
     });
+    
+    // Check enemy-enemy collisions
+    for (let i = 0; i < this.enemies.length; i++) {
+      for (let j = i + 1; j < this.enemies.length; j++) {
+        this.collisionSystem.handleEnemyEnemyCollision(
+          this.enemies[i],
+          this.enemies[j]
+        );
+      }
+    }
     
     // Update camera
     if (this.player) {
@@ -1616,6 +1644,49 @@ export class Game {
     this.state.activePowerUpEffects = this.powerUpSystem.getActiveEffects();
     
     this.generateLevel(currentLevel, currentSeed, this.state.gameConfig);
+  }
+
+  /**
+   * Unload current stage and clean up resources
+   * Call this when quitting to main menu to properly clean up
+   */
+  unloadStage() {
+    // Stop the game loop if running
+    this.stop();
+    
+    // Clear all level entities
+    this._clearLevel();
+    
+    // Reset game state but preserve power-up progress
+    const activePowerUpEffects = this.state.activePowerUpEffects;
+    this.state = {
+      score: 0,
+      lives: this.powerUpSystem.getStartingLives(),
+      level: 1,
+      starsCollected: 0,
+      totalStars: 0,
+      isGameOver: false,
+      isLevelComplete: false,
+      isPaused: false,
+      seed: null,
+      rng: null,
+      levelStartTime: 0,
+      levelCompletionTime: 0,
+      coinsEarned: 0,
+      activePowerUpEffects: activePowerUpEffects,
+      gameConfig: null
+    };
+    
+    // Reset collision system
+    this.collisionSystem.reset();
+    
+    // Clear walls
+    this.walls.forEach(w => {
+      this.scene.remove(w);
+      w.geometry.dispose();
+      w.material.dispose();
+    });
+    this.walls = [];
   }
 
   /**

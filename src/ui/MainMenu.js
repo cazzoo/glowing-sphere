@@ -4,6 +4,7 @@
  */
 
 import { GAME_MODES, DIFFICULTY_TIERS, CAMPAIGN_CONFIG, SANDBOX_DEFAULTS, ARENA } from '../utils/Constants.js';
+import { SeedHistory } from '../utils/SeedHistory.js';
 
 export class MainMenu {
   constructor(container) {
@@ -14,6 +15,14 @@ export class MainMenu {
     this.onGameStart = null;
     this.onBackToMenu = null;
     
+    // Gamepad navigation state
+    this.gamepadIndex = null;
+    this.selectedButtonIndex = 0;
+    this.focusableButtons = [];
+    this.gamepadPollingInterval = null;
+    this.lastGamepadInput = { x: 0, y: 0, aPressed: false };
+    this.gamepadInputCooldown = 0;
+    
     this._init();
   }
 
@@ -23,7 +32,244 @@ export class MainMenu {
    */
   _init() {
     this._createStyles();
+    this._setupGamepadListeners();
     this.showMainMenu();
+    this._startGamepadPolling();
+  }
+
+  /**
+   * Setup gamepad event listeners
+   * @private
+   */
+  _setupGamepadListeners() {
+    window.addEventListener('gamepadconnected', (e) => {
+      console.log('Gamepad connected:', e.gamepad.id);
+      this.gamepadIndex = e.gamepad.index;
+    });
+    
+    window.addEventListener('gamepaddisconnected', (e) => {
+      console.log('Gamepad disconnected');
+      if (this.gamepadIndex === e.gamepad.index) {
+        this.gamepadIndex = null;
+        // Try to find another connected gamepad
+        const gamepads = navigator.getGamepads();
+        for (let i = 0; i < gamepads.length; i++) {
+          if (gamepads[i]) {
+            this.gamepadIndex = i;
+            break;
+          }
+        }
+      }
+    });
+    
+    // Check for already connected gamepads
+    const gamepads = navigator.getGamepads();
+    for (let i = 0; i < gamepads.length; i++) {
+      if (gamepads[i]) {
+        this.gamepadIndex = i;
+        break;
+      }
+    }
+  }
+
+  /**
+   * Start polling for gamepad input
+   * @private
+   */
+  _startGamepadPolling() {
+    if (this.gamepadPollingInterval) return;
+    
+    this.gamepadPollingInterval = setInterval(() => {
+      this._handleGamepadInput();
+    }, 100); // Poll 10 times per second
+  }
+
+  /**
+   * Stop polling for gamepad input
+   * @private
+   */
+  _stopGamepadPolling() {
+    if (this.gamepadPollingInterval) {
+      clearInterval(this.gamepadPollingInterval);
+      this.gamepadPollingInterval = null;
+    }
+  }
+
+  /**
+   * Handle gamepad input for menu navigation
+   * @private
+   */
+  _handleGamepadInput() {
+    if (this.gamepadIndex === null) return;
+    if (this.container.style.display === 'none') return;
+    
+    const gamepads = navigator.getGamepads();
+    const gamepad = gamepads[this.gamepadIndex];
+    if (!gamepad) return;
+    
+    const deadzone = 0.5;
+    let x = 0, y = 0;
+    
+    // Check left stick
+    if (Math.abs(gamepad.axes[0]) > deadzone) x = gamepad.axes[0];
+    if (Math.abs(gamepad.axes[1]) > deadzone) y = gamepad.axes[1];
+    
+    // Check D-pad (buttons 12-15 on most controllers)
+    const buttonPressed = (index) => gamepad.buttons[index] && gamepad.buttons[index].pressed;
+    
+    if (x === 0 && y === 0) {
+      if (buttonPressed(12)) y = -1; // D-pad Up
+      if (buttonPressed(13)) y = 1;  // D-pad Down
+      if (buttonPressed(14)) x = -1; // D-pad Left
+      if (buttonPressed(15)) x = 1;  // D-pad Right
+    }
+    
+    const aPressed = buttonPressed(0) || buttonPressed(1); // A/B or X/Circle
+    const bPressed = buttonPressed(1) || buttonPressed(2); // B or Circle (depends on controller)
+    
+    // Handle navigation with cooldown
+    if (this.gamepadInputCooldown > 0) {
+      this.gamepadInputCooldown--;
+    } else {
+      // Vertical navigation
+      if (y < -0.5) {
+        this._navigateButtons(-1);
+        this.gamepadInputCooldown = 10;
+      } else if (y > 0.5) {
+        this._navigateButtons(1);
+        this.gamepadInputCooldown = 10;
+      }
+      
+      // Horizontal navigation (for difficulty grid)
+      if (x < -0.5) {
+        this._navigateButtonsHorizontal(-1);
+        this.gamepadInputCooldown = 10;
+      } else if (x > 0.5) {
+        this._navigateButtonsHorizontal(1);
+        this.gamepadInputCooldown = 10;
+      }
+    }
+    
+    // Handle button press (A button to activate)
+    if (aPressed && !this.lastGamepadInput.aPressed) {
+      this._activateSelectedButton();
+    }
+    
+    // Handle B button (go back)
+    if (bPressed && !this.lastGamepadInput.bPressed) {
+      this._handleBackButton();
+    }
+    
+    // Store last state
+    this.lastGamepadInput = { x, y, aPressed, bPressed };
+  }
+
+  /**
+   * Handle back button (B button or Escape)
+   * @private
+   */
+  _handleBackButton() {
+    // Find and click the back button if it exists
+    const backButton = this.container.querySelector('#back-to-main');
+    if (backButton) {
+      backButton.click();
+    }
+  }
+
+  /**
+   * Navigate through buttons vertically
+   * @private
+   */
+  _navigateButtons(direction) {
+    if (this.focusableButtons.length === 0) return;
+    
+    // Remove focus from current button
+    const currentButton = this.focusableButtons[this.selectedButtonIndex];
+    if (currentButton) {
+      currentButton.classList.remove('gamepad-focused');
+    }
+    
+    // Move to next button
+    this.selectedButtonIndex += direction;
+    
+    // Wrap around
+    if (this.selectedButtonIndex < 0) {
+      this.selectedButtonIndex = this.focusableButtons.length - 1;
+    } else if (this.selectedButtonIndex >= this.focusableButtons.length) {
+      this.selectedButtonIndex = 0;
+    }
+    
+    // Add focus to new button
+    const nextButton = this.focusableButtons[this.selectedButtonIndex];
+    if (nextButton) {
+      nextButton.classList.add('gamepad-focused');
+      nextButton.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }
+
+  /**
+   * Navigate through buttons horizontally
+   * @private
+   */
+  _navigateButtonsHorizontal(direction) {
+    // For difficulty grid, navigate within the same row
+    const currentButton = this.focusableButtons[this.selectedButtonIndex];
+    if (!currentButton) return;
+    
+    // Check if we're in a difficulty grid (2 columns)
+    const difficultyButtons = Array.from(this.container.querySelectorAll('.difficulty-button'));
+    if (difficultyButtons.length > 0 && difficultyButtons.includes(currentButton)) {
+      const currentIndex = difficultyButtons.indexOf(currentButton);
+      const row = Math.floor(currentIndex / 2);
+      const col = currentIndex % 2;
+      
+      const newCol = (col + direction + 2) % 2;
+      const newIndex = row * 2 + newCol;
+      
+      if (newIndex < difficultyButtons.length) {
+        // Remove focus from current
+        currentButton.classList.remove('gamepad-focused');
+        
+        // Update index to find in focusableButtons
+        this.selectedButtonIndex = this.focusableButtons.indexOf(difficultyButtons[newIndex]);
+        
+        // Add focus to new button
+        difficultyButtons[newIndex].classList.add('gamepad-focused');
+      }
+    }
+  }
+
+  /**
+   * Activate the currently selected button
+   * @private
+   */
+  _activateSelectedButton() {
+    const button = this.focusableButtons[this.selectedButtonIndex];
+    if (button) {
+      button.click();
+    }
+  }
+
+  /**
+   * Update focusable buttons list
+   * @private
+   */
+  _updateFocusableButtons() {
+    // Get all menu buttons and difficulty buttons
+    const menuButtons = Array.from(this.container.querySelectorAll('.menu-button:not(.secondary)'));
+    const difficultyButtons = Array.from(this.container.querySelectorAll('.difficulty-button'));
+    
+    // Combine them, prioritizing primary buttons
+    this.focusableButtons = [...menuButtons, ...difficultyButtons];
+    
+    // Reset selection
+    this.selectedButtonIndex = 0;
+    
+    // Add focus class to first button
+    if (this.focusableButtons.length > 0) {
+      this.focusableButtons.forEach(btn => btn.classList.remove('gamepad-focused'));
+      this.focusableButtons[0].classList.add('gamepad-focused');
+    }
   }
 
   /**
@@ -96,6 +342,19 @@ export class MainMenu {
         border-color: rgba(78, 205, 196, 0.8);
         transform: translateY(-3px);
         box-shadow: 0 10px 30px rgba(78, 205, 196, 0.3);
+      }
+
+      .menu-button.gamepad-focused {
+        background: rgba(255, 255, 255, 0.25);
+        border-color: rgba(78, 205, 196, 1);
+        transform: translateY(-3px);
+        box-shadow: 0 10px 30px rgba(78, 205, 196, 0.5), 0 0 20px rgba(78, 205, 196, 0.8);
+        animation: pulse-focused 1s ease-in-out infinite;
+      }
+
+      @keyframes pulse-focused {
+        0%, 100% { box-shadow: 0 10px 30px rgba(78, 205, 196, 0.5), 0 0 20px rgba(78, 205, 196, 0.8); }
+        50% { box-shadow: 0 10px 40px rgba(78, 205, 196, 0.7), 0 0 30px rgba(78, 205, 196, 1); }
       }
 
       .menu-button:active {
@@ -180,6 +439,18 @@ export class MainMenu {
       .difficulty-button:hover {
         transform: scale(1.05);
         filter: brightness(1.2);
+      }
+
+      .difficulty-button.gamepad-focused {
+        transform: scale(1.08);
+        filter: brightness(1.4);
+        box-shadow: 0 0 25px rgba(255, 255, 255, 0.8), 0 0 50px currentColor;
+        animation: pulse-difficulty 1s ease-in-out infinite;
+      }
+
+      @keyframes pulse-difficulty {
+        0%, 100% { box-shadow: 0 0 25px rgba(255, 255, 255, 0.8), 0 0 50px currentColor; }
+        50% { box-shadow: 0 0 35px rgba(255, 255, 255, 1), 0 0 70px currentColor; }
       }
 
       /* Sandbox Configuration */
@@ -310,6 +581,138 @@ export class MainMenu {
       .sandbox-container::-webkit-scrollbar-thumb:hover {
         background: rgba(78, 205, 196, 0.8);
       }
+
+      /* Seed History */
+      .seed-history-container {
+        max-width: 700px;
+        max-height: 70vh;
+        overflow-y: auto;
+        padding: 1rem;
+      }
+
+      .seed-history-empty {
+        text-align: center;
+        padding: 3rem;
+        color: rgba(255, 255, 255, 0.7);
+        font-size: 1.2rem;
+      }
+
+      .seed-history-list {
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+      }
+
+      .seed-history-item {
+        background: rgba(255, 255, 255, 0.08);
+        border: 2px solid rgba(255, 255, 255, 0.15);
+        border-radius: 10px;
+        padding: 1rem;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        transition: all 0.3s ease;
+        cursor: pointer;
+      }
+
+      .seed-history-item:hover {
+        background: rgba(255, 255, 255, 0.12);
+        border-color: rgba(78, 205, 196, 0.6);
+        transform: translateY(-2px);
+      }
+
+      .seed-history-item.success {
+        border-left: 4px solid #2ecc71;
+      }
+
+      .seed-history-item.failed {
+        border-left: 4px solid #e74c3c;
+      }
+
+      .seed-history-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 0.5rem;
+      }
+
+      .seed-history-number {
+        font-size: 0.9rem;
+        color: rgba(255, 255, 255, 0.6);
+        font-weight: bold;
+      }
+
+      .seed-history-status {
+        font-size: 0.85rem;
+        padding: 0.2rem 0.6rem;
+        border-radius: 5px;
+        background: rgba(255, 255, 255, 0.1);
+      }
+
+      .seed-history-info {
+        flex: 1;
+      }
+
+      .seed-history-seed {
+        font-size: 1.1rem;
+        margin-bottom: 0.3rem;
+        color: #4ecdc4;
+      }
+
+      .seed-history-date {
+        font-size: 0.85rem;
+        color: rgba(255, 255, 255, 0.6);
+        margin-bottom: 0.3rem;
+      }
+
+      .seed-history-stats {
+        display: flex;
+        gap: 1rem;
+        font-size: 0.9rem;
+        color: rgba(255, 255, 255, 0.8);
+      }
+
+      .seed-replay-button {
+        padding: 0.6rem 1.2rem;
+        font-size: 0.9rem;
+        font-weight: bold;
+        border: 2px solid rgba(78, 205, 196, 0.6);
+        border-radius: 8px;
+        background: rgba(78, 205, 196, 0.2);
+        color: white;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        margin-left: 1rem;
+      }
+
+      .seed-replay-button:hover {
+        background: rgba(78, 205, 196, 0.4);
+        border-color: rgba(78, 205, 196, 1);
+        transform: scale(1.05);
+      }
+
+      .seed-replay-button:active {
+        transform: scale(0.98);
+      }
+
+      /* Scrollbar for seed history */
+      .seed-history-container::-webkit-scrollbar {
+        width: 8px;
+      }
+
+      .seed-history-container::-webkit-scrollbar-track {
+        background: rgba(255, 255, 255, 0.1);
+        border-radius: 4px;
+      }
+
+      .seed-history-container::-webkit-scrollbar-thumb {
+        background: rgba(78, 205, 196, 0.5);
+        border-radius: 4px;
+      }
+
+      .seed-history-container::-webkit-scrollbar-thumb:hover {
+        background: rgba(78, 205, 196, 0.8);
+      }
     `;
     document.head.appendChild(style);
   }
@@ -342,6 +745,9 @@ export class MainMenu {
           <button class="menu-button" data-mode="sandbox">
             🔧 Custom Sandbox
           </button>
+          <button class="menu-button" id="replay-seed-btn">
+            🔄 Replay Seed
+          </button>
         </div>
       </div>
     `;
@@ -352,9 +758,16 @@ export class MainMenu {
     this.container.querySelectorAll('.menu-button').forEach(button => {
       button.addEventListener('click', () => {
         const mode = button.dataset.mode;
-        this._handleModeSelection(mode);
+        if (mode) {
+          this._handleModeSelection(mode);
+        } else if (button.id === 'replay-seed-btn') {
+          this.showSeedHistory();
+        }
       });
     });
+    
+    // Update focusable buttons for gamepad navigation
+    this._updateFocusableButtons();
   }
 
   /**
@@ -427,6 +840,9 @@ export class MainMenu {
     document.getElementById('back-to-main').addEventListener('click', () => {
       this.showMainMenu();
     });
+    
+    // Update focusable buttons for gamepad navigation
+    this._updateFocusableButtons();
   }
 
   /**
@@ -474,6 +890,9 @@ export class MainMenu {
     document.getElementById('back-to-main').addEventListener('click', () => {
       this.showMainMenu();
     });
+    
+    // Update focusable buttons for gamepad navigation
+    this._updateFocusableButtons();
   }
 
   /**
@@ -545,6 +964,97 @@ export class MainMenu {
     document.getElementById('back-to-main').addEventListener('click', () => {
       this.showMainMenu();
     });
+    
+    // Update focusable buttons for gamepad navigation
+    this._updateFocusableButtons();
+  }
+
+  /**
+   * Show seed history menu
+   */
+  showSeedHistory() {
+    this._clearContainer();
+
+    const history = SeedHistory.getRecentEntries();
+    
+    let historyHTML = '';
+    if (history.length === 0) {
+      historyHTML = `
+        <div class="seed-history-empty">
+          <p>No seed history yet. Play some games to build up your history!</p>
+        </div>
+      `;
+    } else {
+      historyHTML = `
+        <div class="seed-history-list">
+          ${history.map((entry, index) => `
+            <div class="seed-history-item ${entry.success ? 'success' : 'failed'}" data-seed="${entry.seed}">
+              <div class="seed-history-header">
+                <span class="seed-history-number">#${index + 1}</span>
+                <span class="seed-history-status">${entry.success ? '✅ Success' : '❌ Failed'}</span>
+              </div>
+              <div class="seed-history-info">
+                <div class="seed-history-seed">🌱 Seed: <strong>${entry.seed}</strong></div>
+                <div class="seed-history-date">📅 ${SeedHistory.formatDate(entry.date)}</div>
+                <div class="seed-history-stats">
+                  <span>🎯 Level: ${entry.level}</span>
+                  <span>💰 Score: ${entry.score}</span>
+                </div>
+              </div>
+              <button class="seed-replay-button" data-seed="${entry.seed}">
+                ▶️ Replay
+              </button>
+            </div>
+          `).join('')}
+        </div>
+      `;
+    }
+
+    const menuHTML = `
+      <div class="main-menu-container">
+        <h2 class="campaign-title">🔄 REPLAY SEED</h2>
+        <div class="seed-history-container">
+          ${historyHTML}
+        </div>
+        <div class="menu-buttons">
+          <button class="menu-button secondary" id="back-to-main">
+            ← Back to Menu
+          </button>
+        </div>
+      </div>
+    `;
+
+    this.container.innerHTML = menuHTML;
+
+    // Add event listeners for replay buttons
+    this.container.querySelectorAll('.seed-replay-button').forEach(button => {
+      button.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const seed = button.dataset.seed;
+        this._replaySeed(seed);
+      });
+    });
+
+    document.getElementById('back-to-main').addEventListener('click', () => {
+      this.showMainMenu();
+    });
+    
+    // Update focusable buttons for gamepad navigation
+    this._updateFocusableButtons();
+  }
+
+  /**
+   * Replay a seed
+   * @private
+   */
+  _replaySeed(seed) {
+    const gameConfig = {
+      mode: GAME_MODES.RANDOM_MATCH,
+      level: 1,
+      replaySeed: seed
+    };
+
+    this._startGame(gameConfig);
   }
 
   /**
@@ -804,8 +1314,10 @@ export class MainMenu {
     document.getElementById('quit-game').addEventListener('click', () => {
       this.container.innerHTML = '';
       if (onQuit) onQuit();
-      this.showMainMenu();
     });
+    
+    // Update focusable buttons for gamepad navigation
+    this._updateFocusableButtons();
   }
 
   /**
@@ -813,6 +1325,8 @@ export class MainMenu {
    */
   hide() {
     this.container.style.display = 'none';
+    // Stop polling when menu is hidden
+    this._stopGamepadPolling();
   }
 
   /**
@@ -820,12 +1334,15 @@ export class MainMenu {
    */
   show() {
     this.container.style.display = 'flex';
+    // Start polling when menu is shown
+    this._startGamepadPolling();
   }
 
   /**
    * Cleanup
    */
   dispose() {
+    this._stopGamepadPolling();
     this._clearContainer();
     const style = document.getElementById('main-menu-styles');
     if (style) {

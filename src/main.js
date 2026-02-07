@@ -7,6 +7,7 @@ import { Game } from './core/Game.js';
 import { UIManager } from './ui/UIManager.js';
 import { MainMenu } from './ui/MainMenu.js';
 import { GAME_MODES } from './utils/Constants.js';
+import { SeedHistory } from './utils/SeedHistory.js';
 
 // Import styles
 import './styles/main.css';
@@ -19,6 +20,11 @@ class Application {
     this.canvasContainer = null;
     this.menuContainer = null;
     this.currentGameConfig = null;
+    
+    // Gamepad state for pause menu
+    this.gamepadIndex = null;
+    this.gamepadPollingInterval = null;
+    this.lastStartPressed = false;
   }
 
   /**
@@ -69,6 +75,7 @@ class Application {
     
     // Setup escape key for pause menu
     this._setupInputHandlers();
+    this._setupGamepadHandlers();
     
     console.log('Glowing Sphere initialized successfully!');
   }
@@ -102,6 +109,94 @@ class Application {
         this._togglePauseMenu();
       }
     });
+  }
+
+  /**
+   * Setup gamepad handlers
+   * @private
+   */
+  _setupGamepadHandlers() {
+    // Listen for gamepad connection
+    window.addEventListener('gamepadconnected', (e) => {
+      console.log('Gamepad connected:', e.gamepad.id);
+      this.gamepadIndex = e.gamepad.index;
+      this._startGamepadPolling();
+    });
+    
+    // Listen for gamepad disconnection
+    window.addEventListener('gamepaddisconnected', (e) => {
+      console.log('Gamepad disconnected');
+      if (this.gamepadIndex === e.gamepad.index) {
+        this.gamepadIndex = null;
+        this._stopGamepadPolling();
+        
+        // Try to find another connected gamepad
+        const gamepads = navigator.getGamepads();
+        for (let i = 0; i < gamepads.length; i++) {
+          if (gamepads[i]) {
+            this.gamepadIndex = i;
+            this._startGamepadPolling();
+            break;
+          }
+        }
+      }
+    });
+    
+    // Check for already connected gamepads
+    const gamepads = navigator.getGamepads();
+    for (let i = 0; i < gamepads.length; i++) {
+      if (gamepads[i]) {
+        this.gamepadIndex = i;
+        this._startGamepadPolling();
+        break;
+      }
+    }
+  }
+
+  /**
+   * Start polling for gamepad Start button
+   * @private
+   */
+  _startGamepadPolling() {
+    if (this.gamepadPollingInterval) return;
+    
+    this.gamepadPollingInterval = setInterval(() => {
+      this._checkGamepadStartButton();
+    }, 100); // Poll 10 times per second
+  }
+
+  /**
+   * Stop polling for gamepad Start button
+   * @private
+   */
+  _stopGamepadPolling() {
+    if (this.gamepadPollingInterval) {
+      clearInterval(this.gamepadPollingInterval);
+      this.gamepadPollingInterval = null;
+    }
+  }
+
+  /**
+   * Check if Start button is pressed to toggle pause menu
+   * @private
+   */
+  _checkGamepadStartButton() {
+    if (this.gamepadIndex === null) return;
+    
+    const gamepads = navigator.getGamepads();
+    const gamepad = gamepads[this.gamepadIndex];
+    if (!gamepad) return;
+    
+    // Check Start button (button 9 or 8 depending on controller)
+    const buttonPressed = (index) => gamepad.buttons[index] && gamepad.buttons[index].pressed;
+    const startPressed = buttonPressed(9) || buttonPressed(8);
+    
+    // Toggle pause menu on Start button press (rising edge)
+    if (startPressed && !this.lastStartPressed) {
+      this._togglePauseMenu();
+    }
+    
+    this.lastStartPressed = startPressed;
   }
 
   /**
@@ -139,13 +234,15 @@ class Application {
    * @private
    */
   _quitToMenu() {
-    // Stop game
+    // Unload current stage and clean up resources
     if (this.game) {
-      this.game.stop();
+      this.game.unloadStage();
     }
     
-    // Reset UI
-    this.ui.hideAllScreens();
+    // Hide all UI screens
+    this.ui.hideGameOver();
+    this.ui.hideLevelComplete();
+    this.ui.hideShop();
     
     // Show main menu
     this.menu.showMainMenu();
@@ -162,7 +259,9 @@ class Application {
     this.menu.hide();
     
     // Generate level with config
-    this.game.generateLevel(config.level || 1, null, config);
+    // If replaySeed is provided, use it; otherwise use null for random seed
+    const seed = config.replaySeed || null;
+    this.game.generateLevel(config.level || 1, seed, config);
     
     // Start game
     this.game.start();
@@ -173,6 +272,30 @@ class Application {
     
     // Show game mode indicator
     this._showGameModeIndicator(config.mode);
+  }
+
+  /**
+   * Save seed history to localStorage
+   * @private
+   */
+  _saveSeedHistory(success) {
+    if (!this.game || !this.currentGameConfig) return;
+    
+    const state = this.game.getState();
+    
+    // Don't save campaign games
+    if (this.currentGameConfig.mode === GAME_MODES.CAMPAIGN) {
+      return;
+    }
+    
+    SeedHistory.addEntry({
+      seed: state.seed,
+      date: Date.now(),
+      score: state.score,
+      success: success,
+      level: state.level,
+      mode: this.currentGameConfig.mode
+    });
   }
 
   /**
@@ -236,6 +359,9 @@ class Application {
     
     // Level complete callback
     this.game.onLevelComplete = (data) => {
+      // Save seed history (successful game)
+      this._saveSeedHistory(true);
+      
       // Advance campaign if in campaign mode
       if (this.currentGameConfig?.mode === GAME_MODES.CAMPAIGN) {
         this.menu.advanceCampaign();
@@ -246,6 +372,9 @@ class Application {
     
     // Game over callback
     this.game.onGameOver = (data) => {
+      // Save seed history (failed game)
+      this._saveSeedHistory(false);
+      
       this.ui.showGameOver(data);
     };
     
@@ -264,6 +393,9 @@ class Application {
    * Cleanup resources
    */
   dispose() {
+    // Stop gamepad polling
+    this._stopGamepadPolling();
+    
     if (this.game) {
       this.game.dispose();
       this.game = null;
